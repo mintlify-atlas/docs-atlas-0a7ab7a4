@@ -1,0 +1,138 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Flower Engine",
+  "projectDescription": "A blazingly fast, split-brain roleplay engine for hardcore tabletop narrators with Python backend and Rust TUI.",
+  "theme": "aspen",
+  "primaryColor": "#E91E63",
+  "lightColor": "#F48FB1",
+  "darkColor": "#880E4F",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/split-brain",
+              "concepts/websocket-protocol",
+              "concepts/system-rules"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/configuration",
+              "guides/creating-worlds",
+              "guides/creating-characters",
+              "guides/session-management",
+              "guides/custom-rules"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/rag-system",
+              "advanced/model-providers",
+              "advanced/running-locally"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Python Backend",
+            "pages": [
+              "api/main",
+              "api/commands",
+              "api/database",
+              "api/llm",
+              "api/rag"
+            ]
+          },
+          {
+            "group": "Commands",
+            "pages": [
+              "commands/overview",
+              "commands/model",
+              "commands/world",
+              "commands/character",
+              "commands/session",
+              "commands/rules"
+            ]
+          },
+          {
+            "group": "Asset Formats",
+            "pages": [
+              "assets/world-schema",
+              "assets/character-schema",
+              "assets/rules-schema"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Contributing",
+            "pages": [
+              "dev/overview",
+              "dev/python-backend",
+              "dev/rust-tui",
+              "dev/testing"
+            ]
+          },
+          {
+            "group": "Roadmap",
+            "pages": [
+              "roadmap/dice-system",
+              "roadmap/stateful-npcs",
+              "roadmap/sensory-anchoring"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Split architecture with Python brain (FastAPI/LLM) and Rust face (Ratatui TUI)",
+    "Real-time token streaming with WebSocket communication",
+    "RAG system with ChromaDB for world lore and memory",
+    "Session management with SQLite persistence",
+    "Multi-provider LLM support (OpenRouter, Groq, DeepSeek, Gemini)",
+    "YAML-based asset system for worlds, characters, and rules",
+    "Hardcore system rules for grounded, consequence-driven storytelling"
+  ],
+  "publicApiSurface": [
+    "/model <model_id> - Hot-swap LLM model",
+    "/world select <world_id> - Select active world",
+    "/world attach_lore <text> - Add lore to world",
+    "/character select <character_id> - Select active character",
+    "/session new - Create new session",
+    "/session continue <session_id> - Continue existing session",
+    "/session delete <session_id> - Delete session",
+    "/rules add <rule_id> - Activate rule",
+    "/rules clear - Clear all rules",
+    "/nsfw - Toggle NSFW mode",
+    "/cancel - Cancel streaming response",
+    "WorldManager - Manage world assets",
+    "CharacterManager - Manage character assets",
+    "SessionManager - Manage roleplay sessions",
+    "MessageManager - Manage chat history",
+    "RAGManager - Vector storage for lore and memory",
+    "stream_chat_response() - Stream LLM responses",
+    "handle_command() - Process TUI commands"
+  ]
+}
