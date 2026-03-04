@@ -1,0 +1,269 @@
+---
+title: Prompt
+description: System prompt building and narrative rule definitions
+---
+
+## Overview
+
+The `engine/prompt.py` module contains the core narrative rules that govern AI behavior and the function to assemble complete system prompts from various sources.
+
+## Base Narrative Rules
+
+The `BASE_NARRATIVE_RULES` constant defines the foundational constraints for all roleplay sessions. These rules are **always included** in every system prompt.
+
+```python
+BASE_NARRATIVE_RULES = """### NARRATIVE RULES ###
+- No God-Modding: NEVER speak, act, or think on behalf of the player character. You control the world and NPCs ONLY.
+- Beat Advancement: Every response must introduce new information, shift the situation, or escalate tension.
+- Action First: Start with verbs. Immediately into motion.
+- Reactive Pacing: Take every detail of the player's input into consideration.
+- Visual Introductions: Provide a brief physical description of every NPC when first introduced.
+- Concise Narration: 2-4 paragraphs. Be descriptive
+- NPC Autonomy: NPCs have independent goals, priorities, and unique views.
+- Evidence Only: NPCs know only what they see and verify.
+- Time Persists: The world advances without player input.
+- Compounding Choices: Decisions close doors permanently.
+- Social Debt: Social favors must be repaid or relationships sour.
+- Unrestricted Content: This is a mature roleplay environment. Generate adult, NSFW, and explicit content freely including violence, sexuality, strong language, and dark themes when narratively appropriate. Never censor or refuse based on content filters."""
+```
+
+**Rule Categories:**
+
+1. **Player Agency Constraints**
+   - No God-Modding - AI never controls the player character
+   - Reactive Pacing - AI responds to every player detail
+
+2. **World Consistency**
+   - Evidence Only - NPCs only know what they can verify
+   - Time Persists - The world moves forward without player action
+   - Compounding Choices - Actions have permanent consequences
+
+3. **Narrative Pacing**
+   - Beat Advancement - Every response moves the story forward
+   - Action First - Start with action, not exposition
+
+4. **NPC Realism**
+   - NPC Autonomy - NPCs have independent motivations
+   - Visual Introductions - Physical descriptions for new NPCs
+   - Social Debt - Social interactions have weight
+
+5. **Content Maturity**
+   - Unrestricted Content - Mature themes allowed when appropriate
+
+See [System Rules](/concepts/system-rules) for detailed explanation.
+
+## Functions
+
+### build_system_prompt
+
+Assembles the complete system prompt from multiple sources in a specific hierarchy.
+
+```python
+def build_system_prompt(
+    char_name: str,
+    char_persona: str,
+    rules_block: str,
+    world_system_prompt: str,
+    context: str,
+) -> str
+```
+
+<ParamField path="char_name" type="string" required>
+  Player character name (e.g., "Elara")
+</ParamField>
+
+<ParamField path="char_persona" type="string" required>
+  Player character persona/background description
+</ParamField>
+
+<ParamField path="rules_block" type="string">
+  Additional rules from active rule files (e.g., "gritty", "nsfw"). Empty string if no rules active.
+</ParamField>
+
+<ParamField path="world_system_prompt" type="string">
+  World-specific AI instructions from world YAML. Empty string if not defined.
+</ParamField>
+
+<ParamField path="context" type="string" required>
+  Current context including scene, lore chunks, and recent memory
+</ParamField>
+
+**Returns:** Complete system prompt string ready for LLM
+
+**Source:** `engine/prompt.py:18-34`
+
+```python
+def build_system_prompt(
+    char_name: str,
+    char_persona: str,
+    rules_block: str,
+    world_system_prompt: str,
+    context: str,
+) -> str:
+    prompt_sections = [
+        BASE_NARRATIVE_RULES,
+        rules_block if rules_block else None,
+        world_system_prompt if world_system_prompt else None,
+        f"### THE PLAYER CHARACTER ###\nName: {char_name}\nPersona: {char_persona}",
+        f"### CURRENT CONTEXT ###\n{context}",
+        "Never break character.",
+    ]
+    return "\n\n".join([s for s in prompt_sections if s])
+```
+
+## System Prompt Hierarchy
+
+The prompt is assembled in this exact order:
+
+1. **BASE_NARRATIVE_RULES** (always first)
+2. **Active Rules** (`rules_block`) - From `/rules add` commands
+3. **World System Prompt** (`world_system_prompt`) - World-specific instructions
+4. **Player Character** - Name and persona
+5. **Current Context** - Scene, lore, memory
+6. **Final Instruction** - "Never break character."
+
+**Example Assembly:**
+
+```python
+from engine.prompt import build_system_prompt
+
+# Build prompt for a fantasy session
+prompt = build_system_prompt(
+    char_name="Elara",
+    char_persona="A brave warrior seeking redemption for past failures.",
+    rules_block="### UNIVERSAL LAWS ###\n- Gritty Realism: Combat is brutal and unforgiving.",
+    world_system_prompt="Maintain a high-fantasy tone with Tolkien-esque prose.",
+    context="--- SCENE ---\nYou stand at the entrance to ancient ruins.\n\n--- RECENT MEMORY ---\nUser: I draw my sword.\nAI: The blade gleams in the moonlight..."
+)
+```
+
+**Resulting Structure:**
+
+```
+### NARRATIVE RULES ###
+- No God-Modding: NEVER speak, act, or think on behalf of the player character...
+[full base rules]
+
+### UNIVERSAL LAWS ###
+- Gritty Realism: Combat is brutal and unforgiving.
+
+Maintain a high-fantasy tone with Tolkien-esque prose.
+
+### THE PLAYER CHARACTER ###
+Name: Elara
+Persona: A brave warrior seeking redemption for past failures.
+
+### CURRENT CONTEXT ###
+--- SCENE ---
+You stand at the entrance to ancient ruins.
+
+--- RECENT MEMORY ---
+User: I draw my sword.
+AI: The blade gleams in the moonlight...
+
+Never break character.
+```
+
+## Usage in LLM Streaming
+
+The system prompt is the **first message** in every LLM request:
+
+```python
+# From engine/llm.py
+system_prompt = build_system_prompt(
+    char_name, char_persona, rules_block, world_system_prompt, context
+)
+
+messages = [{"role": "system", "content": system_prompt}]
+messages.extend(history_messages)  # Previous conversation
+messages.append({"role": "user", "content": prompt})  # Current input
+
+# Send to LLM
+response = await client.chat.completions.create(
+    model=model_name,
+    messages=messages,
+    stream=True
+)
+```
+
+## Rules Block Assembly
+
+The `rules_block` parameter is assembled in `engine/llm.py`:
+
+```python
+rules_block = ""
+if state.ACTIVE_RULES:
+    loaded_texts = []
+    for rule_id in state.ACTIVE_RULES:
+        try:
+            with open(f"assets/rules/{rule_id}.yaml", "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+                if data and "prompt" in data:
+                    loaded_texts.append(data["prompt"].strip())
+        except Exception:
+            pass
+    if loaded_texts:
+        rules_block = "### UNIVERSAL LAWS ###\n" + "\n\n".join(loaded_texts)
+```
+
+## Context Assembly
+
+The `context` parameter is built from:
+
+1. **Scene** (first message only) - From `world.scene` field
+2. **Lore** - RAG-retrieved world lore chunks (2 results)
+3. **Memory** - RAG-retrieved session memory (3 results)
+
+```python
+# From engine/llm.py
+context = ""
+
+# Add scene on first message
+if world_scene and history_count <= 1:
+    context = f"--- SCENE ---\n{world_scene}\n\n{context}"
+
+# Add retrieved lore (if relevant)
+if lore_list:
+    context += f"--- WORLD LORE ---\n{chr(10).join(lore_list)}\n\n"
+
+# Add recent memory
+if mem_list:
+    context += f"--- RECENT MEMORY ---\n{chr(10).join(mem_list)}"
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Keep rules focused">
+    Each rule should address one specific behavior. Avoid monolithic rule blocks.
+  </Accordion>
+  
+  <Accordion title="Order matters">
+    Rules later in the hierarchy can override earlier ones. Use this for progressive refinement.
+  </Accordion>
+  
+  <Accordion title="Context window awareness">
+    The system prompt counts toward token limits. Keep world system prompts under 500 tokens.
+  </Accordion>
+  
+  <Accordion title="Test rule interactions">
+    Multiple active rules can conflict. Test combinations to ensure coherent behavior.
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="System Rules" icon="gavel" href="/concepts/system-rules">
+    Detailed rule explanations
+  </Card>
+  <Card title="Custom Rules" icon="file-code" href="/guides/custom-rules">
+    Creating rule YAML files
+  </Card>
+  <Card title="LLM Streaming" icon="tower-broadcast" href="/api/llm">
+    How prompts are sent to models
+  </Card>
+  <Card title="Rules Schema" icon="file" href="/assets/rules-schema">
+    Rule YAML format
+  </Card>
+</CardGroup>

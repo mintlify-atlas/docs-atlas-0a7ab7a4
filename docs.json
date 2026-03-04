@@ -26,7 +26,7 @@
           {
             "group": "Get Started",
             "pages": [
-              "introduction",
+              "index",
               "quickstart",
               "installation"
             ]
@@ -70,7 +70,11 @@
               "api/commands",
               "api/database",
               "api/llm",
-              "api/rag"
+              "api/rag",
+              "api/handlers",
+              "api/utils",
+              "api/prompt",
+              "api/state"
             ]
           },
           {

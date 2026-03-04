@@ -1,97 +1,146 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Welcome to Flower Engine"
+description: "A high-performance, split-architecture narrative system for immersive tabletop-style roleplaying"
 ---
 
-## Setting up
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.svg"
+  alt="Flower Engine Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.svg"
+  alt="Flower Engine Hero Dark"
+/>
 
-Get your documentation site up and running in minutes.
+## What is Flower Engine?
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+Flower Engine is a modern, **AI-powered roleplaying system** that combines the depth of tabletop RPGs with cutting-edge technology. Built with a split architecture design, it delivers blazingly fast, real-time narrative experiences through a sophisticated Python backend and a beautiful Rust terminal interface.
 
-## Make it yours
+<Note>
+  **Fully Vibecoded Application** — Built at the speed of thought with AI-first engineering.
+</Note>
 
-Design a docs site that looks great and empowers your users.
+## Key Features
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+Flower Engine is designed for hardcore tabletop-style roleplaying with modern AI capabilities.
+
+<CardGroup cols={2}>
+  <Card title="Split Architecture" icon="code-branch">
+    Decoupled Python "Brain" (FastAPI/LLM) and Rust "Face" (Ratatui TUI) communicating via WebSockets for maximum performance and modularity.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  
+  <Card title="Live Token Streaming" icon="bolt">
+    Blazingly fast, real-time response rendering with typewriter animations. Watch the story unfold character by character.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  
+  <Card title="Hardcore System Rules" icon="shield-halved">
+    Built-in logic for grounded reality, NPC autonomy, and consequence-driven storytelling. The world reacts to your choices.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  
+  <Card title="Session Management" icon="floppy-disk">
+    Full history persistence, session hot-swapping, and strict memory isolation. Never lose your progress.
   </Card>
-</Columns>
+  
+  <Card title="RAG-Powered Memory" icon="brain">
+    Vector-based retrieval with ChromaDB and local embeddings ensures contextually relevant responses without sending your data to the cloud.
+  </Card>
+  
+  <Card title="Multi-Provider Support" icon="server">
+    Works with OpenRouter, Google Gemini, Groq, and DeepSeek. Switch models on the fly without restarting.
+  </Card>
+</CardGroup>
 
-## Create beautiful pages
+## Architecture Overview
 
-Everything you need to create world-class documentation.
+Flower Engine uses a **split-brain architecture** that separates concerns for optimal performance:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+```text
+    [ THE FACE ]             [ THE BRAIN ]
+    (Rust / Ratatui)         (Python / FastAPI)
+          |                         |
+    TUI Interface <--- WebSocket ---> LLM Orchestrator
+          |            (JSON V1)            |
+    Async Input                     RAG (ChromaDB)
+    Event Loop                      SQLite Persistence
+```
 
-## Need inspiration?
+### The Brain (Backend)
+- **Python 3.12+** with **FastAPI** for asynchronous orchestration
+- **ChromaDB** for vector storage and RAG (Retrieval-Augmented Generation)
+- **SentenceTransformers** (`all-MiniLM-L6-v2`) for local embeddings
+- **SQLite** for session and character persistence
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
+### The Face (Frontend)
+- **Rust** with **Ratatui** for a blazingly fast terminal UI
+- **Tokio** for multi-threaded async event handling
+- **WebSocket** connection for real-time streaming
+
+<Tip>
+  The split architecture means you can run the backend on a powerful server while keeping the lightweight TUI on your local machine.
+</Tip>
+
+## System Rules
+
+The engine enforces a permanent ruleset to ensure immersive, consequence-driven gameplay:
+
+1. **Grounded Reality**: No outside intervention or prophecies
+2. **Player Is Not Special**: You must earn your influence through action
+3. **Secrecy Is Absolute**: NPCs do not have access to your character sheet
+4. **Time Persists**: The world moves forward even if you wait
+
+## Quick Start
+
+Ready to begin your journey? Get up and running in minutes.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Flower Engine running in 5 minutes with our automated setup.
+  </Card>
+  
+  <Card title="Installation" icon="download" href="/installation">
+    Detailed installation guide with system requirements and troubleshooting.
+  </Card>
+  
+  <Card title="Architecture" icon="diagram-project" href="/concepts/architecture">
+    Deep dive into the split-brain design and WebSocket protocol.
+  </Card>
+  
+  <Card title="Creating Worlds" icon="globe" href="/guides/creating-worlds">
+    Learn how to build rich, immersive worlds with YAML configuration.
+  </Card>
+</CardGroup>
+
+## Use Cases
+
+Flower Engine is perfect for:
+
+- **Solo Tabletop RPG Sessions**: Experience full campaigns with an AI narrator
+- **Creative Writing**: Generate and explore narrative branches interactively
+- **World Building**: Test and develop your RPG settings with real-time feedback
+- **Game Master Tools**: Use as a co-narrator for your tabletop games
+
+## Next Steps
+
+<Steps>
+  <Step title="Install Prerequisites">
+    Set up Python 3.12+, Rust, and get your API keys ready.
+  </Step>
+  
+  <Step title="Run the Setup Script">
+    Our automated script handles virtual environments and dependencies.
+  </Step>
+  
+  <Step title="Configure Your API Keys">
+    Add your OpenRouter, Gemini, or DeepSeek keys to `config.yaml`.
+  </Step>
+  
+  <Step title="Launch and Play">
+    Run `./start.sh` and enter your first narrative adventure.
+  </Step>
+</Steps>
+
+<Card title="Ready to start?" icon="arrow-right" href="/quickstart">
+  Follow our quickstart guide to get Flower Engine running in minutes.
 </Card>

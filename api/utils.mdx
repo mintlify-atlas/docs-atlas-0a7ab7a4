@@ -1,0 +1,211 @@
+---
+title: Utils
+description: Utility functions for WebSocket messaging and asset loading
+---
+
+## Overview
+
+The `engine/utils.py` module provides utility functions for building WebSocket JSON payloads and loading YAML asset files from the filesystem.
+
+## Functions
+
+### build_ws_payload
+
+Constructs a standardized WebSocket JSON message following the Flower Engine protocol.
+
+```python
+def build_ws_payload(event: str, content: str, metadata: Dict[str, Any] = None) -> str
+```
+
+<ParamField path="event" type="string" required>
+  Event type (e.g., `sync_state`, `chat_chunk`, `system_update`, `error`)
+</ParamField>
+
+<ParamField path="content" type="string" required>
+  Main message content (can be empty string for metadata-only events)
+</ParamField>
+
+<ParamField path="metadata" type="Dict[str, Any]">
+  Optional metadata dictionary (defaults to empty dict if not provided)
+</ParamField>
+
+**Returns:** JSON string ready to send via WebSocket
+
+**Source:** `engine/utils.py:7-14`
+
+```python
+def build_ws_payload(event: str, content: str, metadata: Dict[str, Any] = None) -> str:
+    return json.dumps({
+        "event": event,
+        "payload": {
+            "content": content,
+            "metadata": metadata or {}
+        }
+    })
+```
+
+**Usage Examples:**
+
+```python
+from engine.utils import build_ws_payload
+
+# System message
+msg = build_ws_payload("system_update", "✓ Session created", {
+    "session_id": "abc123"
+})
+# {"event": "system_update", "payload": {"content": "✓ Session created", "metadata": {"session_id": "abc123"}}}
+
+# Chat chunk during streaming
+chunk = build_ws_payload("chat_chunk", "The ancient", {
+    "model": "gpt-4o-mini",
+    "tokens_per_second": 45.2
+})
+
+# Error message
+error = build_ws_payload("error", "World not found", {})
+
+# Metadata-only event
+sync = build_ws_payload("sync_state", "", {
+    "world_id": "fantasy",
+    "character_id": "elara",
+    "available_worlds": [...]
+})
+```
+
+**Used Throughout:**
+
+- `engine/main.py` - All WebSocket communication
+- `engine/commands.py` - Command responses
+- `engine/handlers.py` - State synchronization
+- `engine/llm.py` - Streaming chat responses
+
+### load_yaml_assets
+
+Loads and parses YAML asset files matching a glob pattern, returning valid assets with an `id` field.
+
+```python
+def load_yaml_assets(pattern: str) -> List[Dict[str, Any]]
+```
+
+<ParamField path="pattern" type="string" required>
+  Glob pattern for YAML files (e.g., `assets/worlds/*.yaml`)
+</ParamField>
+
+**Returns:** List of parsed YAML dictionaries that contain an `id` field
+
+**Behavior:**
+
+1. Expands glob pattern to find matching files
+2. Sorts files alphabetically
+3. Attempts to parse each file as YAML
+4. Validates that `id` field exists
+5. Logs errors for files that fail to load
+6. Returns only successfully loaded assets
+
+**Source:** `engine/utils.py:16-27`
+
+```python
+def load_yaml_assets(pattern: str) -> List[Dict[str, Any]]:
+    assets = []
+    for filepath in sorted(glob.glob(pattern)):
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+                if data and "id" in data:
+                    assets.append(data)
+        except Exception as e:
+            log.error(f"Failed to load asset {filepath}: {e}")
+    return assets
+```
+
+**Usage Examples:**
+
+```python
+from engine.utils import load_yaml_assets
+
+# Load all world definitions
+worlds = load_yaml_assets("assets/worlds/*.yaml")
+# [
+#   {"id": "cyberpunk", "name": "Neo Tokyo", "lore": "..."},
+#   {"id": "fantasy", "name": "Eldergrove", "lore": "..."}
+# ]
+
+# Load all character definitions
+characters = load_yaml_assets("assets/characters/*.yaml")
+
+# Load all rule definitions
+rules = load_yaml_assets("assets/rules/*.yaml")
+
+# Used in state.py to populate available assets
+available_worlds = [
+    {"id": d["id"], "name": d.get("name", d["id"])}
+    for d in load_yaml_assets("assets/worlds/*.yaml")
+]
+```
+
+**Used By:**
+
+- `engine/state.py` - Loading available worlds, characters, and rules at startup
+- `engine/main.py` - Syncing YAML assets to database during startup
+
+**Error Handling:**
+
+- Silently skips files that fail to parse
+- Logs error message with file path and exception
+- Returns empty list if no valid assets found
+
+## Asset File Requirements
+
+For a YAML file to be loaded successfully:
+
+1. **Must be valid YAML syntax**
+2. **Must contain an `id` field** at the root level
+3. File must be readable with UTF-8 encoding
+
+Example valid asset:
+
+```yaml
+id: "my_world"
+name: "My World"
+lore: "A dark and mysterious realm..."
+```
+
+Example invalid assets (skipped):
+
+```yaml
+# Missing id field
+name: "Some World"
+lore: "..."
+```
+
+```yaml
+# Invalid YAML syntax
+id: my_world
+name: "Broken
+lore: ...
+```
+
+## Dependencies
+
+- `json` - JSON serialization for WebSocket messages
+- `yaml` - YAML parsing via `yaml.safe_load()`
+- `glob` - File pattern matching
+- `typing` - Type hints
+- `engine.logger.log` - Error logging
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="WebSocket Protocol" icon="plug" href="/concepts/websocket-protocol">
+    Message format specification
+  </Card>
+  <Card title="Asset Schemas" icon="file-code" href="/assets/world-schema">
+    YAML file formats
+  </Card>
+  <Card title="State Management" icon="database" href="/api/state">
+    Asset loading at startup
+  </Card>
+  <Card title="Handlers" icon="broadcast-tower" href="/api/handlers">
+    Functions that use build_ws_payload
+  </Card>
+</CardGroup>

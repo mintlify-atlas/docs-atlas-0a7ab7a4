@@ -1,0 +1,322 @@
+---
+title: State
+description: Global state variables and persistence management
+---
+
+## Overview
+
+The `engine/state.py` module manages global state variables for the active session, world, character, model, and rules. It also handles state persistence to disk via `persist.json`.
+
+## Global State Variables
+
+### Session State
+
+```python
+ACTIVE_WORLD_ID: str = ""
+ACTIVE_CHARACTER_ID: str = ""
+ACTIVE_SESSION_ID: str = ""
+```
+
+<ResponseField name="ACTIVE_WORLD_ID" type="string">
+  Currently selected world ID (e.g., `"cyberpunk"`, `"fantasy"`)
+</ResponseField>
+
+<ResponseField name="ACTIVE_CHARACTER_ID" type="string">
+  Currently selected character ID (e.g., `"elara"`, `"mercenary"`)
+</ResponseField>
+
+<ResponseField name="ACTIVE_SESSION_ID" type="string">
+  Currently active session ID (12-character hex string, e.g., `"a1b2c3d4e5f6"`)
+</ResponseField>
+
+**Modified By:**
+- `/world select` - Sets `ACTIVE_WORLD_ID`
+- `/character select` - Sets `ACTIVE_CHARACTER_ID`
+- `/session new` - Sets `ACTIVE_SESSION_ID`
+- `/session continue` - Sets all three based on session data
+- `/session delete` - Clears `ACTIVE_SESSION_ID` if current session deleted
+
+### Model State
+
+```python
+CURRENT_MODEL: str = MODEL_NAME
+MODEL_CONFIRMED: bool = False
+```
+
+<ResponseField name="CURRENT_MODEL" type="string">
+  Currently selected LLM model (e.g., `"google/gemini-2.0-pro-exp-02-05:free"`)
+</ResponseField>
+
+<ResponseField name="MODEL_CONFIRMED" type="boolean">
+  Whether the model has been explicitly selected by the user (vs default)
+</ResponseField>
+
+**Modified By:**
+- `/model` command - Sets both values and confirms selection
+- Session continuation - Restores model from session metadata
+
+### Rules State
+
+```python
+ACTIVE_RULES: List[str] = []
+```
+
+<ResponseField name="ACTIVE_RULES" type="List[string]">
+  List of active rule IDs (e.g., `["gritty", "nsfw"]`)
+</ResponseField>
+
+**Modified By:**
+- `/rules add` - Appends rule ID if not already present
+- `/rules clear` - Empties the list
+- `/nsfw` - Toggles `"nsfw"` in the list
+
+### Available Assets
+
+```python
+available_worlds: List[Dict[str, str]]
+available_characters: List[Dict[str, str]]
+available_rules: List[Dict[str, str]]
+AVAILABLE_MODELS: List[Dict[str, Any]]
+```
+
+<ResponseField name="available_worlds" type="List[Dict]">
+  All world assets loaded from `assets/worlds/*.yaml` - Format: `[{"id": "...", "name": "..."}]`
+</ResponseField>
+
+<ResponseField name="available_characters" type="List[Dict]">
+  All character assets loaded from `assets/characters/*.yaml`
+</ResponseField>
+
+<ResponseField name="available_rules" type="List[Dict]">
+  All rule assets loaded from `assets/rules/*.yaml`
+</ResponseField>
+
+<ResponseField name="AVAILABLE_MODELS" type="List[Dict]">
+  All LLM models fetched from providers (OpenRouter, Groq, Gemini, DeepSeek) during startup
+</ResponseField>
+
+**Populated At Startup:**
+
+```python
+# From engine/state.py:50-62
+available_worlds = [
+    {"id": d["id"], "name": d.get("name", d["id"])}
+    for d in load_yaml_assets("assets/worlds/*.yaml")
+]
+available_characters = [
+    {"id": d["id"], "name": d.get("name", d["id"])}
+    for d in load_yaml_assets("assets/characters/*.yaml")
+]
+available_rules = [
+    {"id": d["id"], "name": d.get("name", d["id"])}
+    for d in load_yaml_assets("assets/rules/*.yaml")
+]
+AVAILABLE_MODELS = []  # Populated by engine/main.py during startup
+```
+
+## Functions
+
+### save_state
+
+Persists current state to `persist.json` for recovery on restart.
+
+```python
+def save_state() -> None
+```
+
+**Behavior:**
+
+1. Collects current values of active session variables
+2. Writes JSON file with world, character, session, model, and rules
+3. File is created in the working directory as `persist.json`
+
+**Source:** `engine/state.py:9-19`
+
+```python
+def save_state():
+    data = {
+        "world_id": ACTIVE_WORLD_ID,
+        "character_id": ACTIVE_CHARACTER_ID,
+        "session_id": ACTIVE_SESSION_ID,
+        "model": CURRENT_MODEL,
+        "model_confirmed": MODEL_CONFIRMED,
+        "rules": ACTIVE_RULES,
+    }
+    with open(PERSIST_FILE, "w") as f:
+        json.dump(data, f)
+```
+
+**Called By:**
+- Every command that modifies state (`/world select`, `/character select`, `/model`, `/rules add`, `/session new`, etc.)
+
+**Example `persist.json`:**
+
+```json
+{
+  "world_id": "cyberpunk",
+  "character_id": "mercenary",
+  "session_id": "f3a4b5c6d7e8",
+  "model": "anthropic/claude-3-haiku",
+  "model_confirmed": true,
+  "rules": ["gritty", "nsfw"]
+}
+```
+
+### load_persisted_state
+
+Loads state from `persist.json` on engine startup to restore the previous session.
+
+```python
+def load_persisted_state() -> None
+```
+
+**Behavior:**
+
+1. Checks if `persist.json` exists
+2. Reads and parses JSON
+3. Updates global state variables with persisted values
+4. Falls back to defaults if file doesn't exist or is invalid
+
+**Source:** `engine/state.py:22-39`
+
+```python
+def load_persisted_state():
+    global \
+        ACTIVE_WORLD_ID, \
+        ACTIVE_CHARACTER_ID, \
+        CURRENT_MODEL, \
+        MODEL_CONFIRMED, \
+        ACTIVE_RULES
+    if os.path.exists(PERSIST_FILE):
+        try:
+            with open(PERSIST_FILE, "r") as f:
+                data = json.load(f)
+                ACTIVE_WORLD_ID = data.get("world_id", "")
+                ACTIVE_CHARACTER_ID = data.get("character_id", "")
+                CURRENT_MODEL = data.get("model", MODEL_NAME)
+                MODEL_CONFIRMED = data.get("model_confirmed", False)
+                ACTIVE_RULES = data.get("rules", [])
+        except:
+            pass
+```
+
+**Called At:** Module import time (`engine/state.py:64`)
+
+**Note:** `session_id` is **not** restored from persist.json. Sessions must be explicitly continued with `/session continue`.
+
+## State Lifecycle
+
+<Steps>
+  <Step title="Engine Startup">
+    1. Module loads, initializes variables to defaults
+    2. `available_worlds/characters/rules` populated from YAML files
+    3. `load_persisted_state()` called to restore previous state
+    4. `engine/main.py` fetches models and populates `AVAILABLE_MODELS`
+  </Step>
+  
+  <Step title="User Commands">
+    Commands modify state variables and call `save_state()`:
+    - `/world select fantasy` → `ACTIVE_WORLD_ID = "fantasy"` → `save_state()`
+    - `/model gpt-4o-mini` → `CURRENT_MODEL = "gpt-4o-mini"` → `save_state()`
+  </Step>
+  
+  <Step title="State Synchronization">
+    `broadcast_sync_state()` sends current state to TUI after every change
+  </Step>
+  
+  <Step title="Engine Restart">
+    State is restored from `persist.json`, allowing seamless continuation
+  </Step>
+</Steps>
+
+## Usage Examples
+
+### Reading State
+
+```python
+import engine.state as state
+
+# Check if user is ready to start chatting
+if not state.ACTIVE_WORLD_ID or not state.ACTIVE_CHARACTER_ID or not state.ACTIVE_SESSION_ID:
+    await websocket.send_text(
+        build_ws_payload("system_update", "✗ Select world, character, and create a session first.")
+    )
+    return
+
+# Get current model
+model = state.CURRENT_MODEL
+
+# Check active rules
+if "nsfw" in state.ACTIVE_RULES:
+    # NSFW content allowed
+    pass
+```
+
+### Modifying State
+
+```python
+import engine.state as state
+
+# Select a world
+state.ACTIVE_WORLD_ID = "cyberpunk"
+state.save_state()  # Persist to disk
+
+# Add a rule
+if "gritty" not in state.ACTIVE_RULES:
+    state.ACTIVE_RULES.append("gritty")
+state.save_state()
+
+# Clear all rules
+state.ACTIVE_RULES.clear()
+state.save_state()
+```
+
+### Using Available Assets
+
+```python
+import engine.state as state
+
+# Get all world IDs
+world_ids = [w["id"] for w in state.available_worlds]
+
+# Check if a model exists
+model_id = "gpt-4o-mini"
+if any(m["id"] == model_id for m in state.AVAILABLE_MODELS):
+    state.CURRENT_MODEL = model_id
+    state.MODEL_CONFIRMED = True
+    state.save_state()
+```
+
+## Persistence File Location
+
+- **Filename:** `persist.json`
+- **Location:** Working directory where the engine is launched
+- **Format:** JSON
+- **Encoding:** UTF-8
+
+<Warning>
+  The `persist.json` file is written synchronously on every state change. In high-frequency command scenarios, this could cause I/O overhead. The file is small (typically less than 1KB), so impact is minimal in normal usage.
+</Warning>
+
+## Thread Safety
+
+<Warning>
+  Global state variables are **not thread-safe**. The engine uses async I/O (not multi-threading), so this is not a concern in normal operation. However, if extending the engine with background threads, you must add proper locking.
+</Warning>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Handlers" icon="broadcast-tower" href="/api/handlers">
+    broadcast_sync_state sends state to TUI
+  </Card>
+  <Card title="Commands" icon="terminal" href="/api/commands">
+    Commands that modify state
+  </Card>
+  <Card title="Session Management" icon="clock-rotate-left" href="/guides/session-management">
+    How sessions use state
+  </Card>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Initial state setup
+  </Card>
+</CardGroup>

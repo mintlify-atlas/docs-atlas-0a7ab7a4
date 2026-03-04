@@ -1,0 +1,215 @@
+---
+title: Handlers
+description: WebSocket state synchronization and message broadcasting helpers
+---
+
+## Overview
+
+The `engine/handlers.py` module provides helper functions for broadcasting state updates and chat history to WebSocket clients. These functions are used throughout the engine to keep the TUI synchronized with backend state changes.
+
+## Functions
+
+### broadcast_sync_state
+
+Sends current engine state to a WebSocket client, synchronizing all available worlds, characters, models, sessions, and active selections.
+
+```python
+async def broadcast_sync_state(ws: WebSocket) -> None
+```
+
+<ParamField path="ws" type="WebSocket" required>
+  FastAPI WebSocket connection to send state to
+</ParamField>
+
+**Behavior:**
+
+1. Retrieves the 15 most recent sessions from the database
+2. Formats session data with world, character, and title preview
+3. Sends a `sync_state` event containing:
+   - Active model, world, character, session IDs
+   - Available worlds, characters, models, rules
+   - Active rules
+   - Recent sessions list
+
+**Source:** `engine/handlers.py:9-32`
+
+```python
+async def broadcast_sync_state(ws: WebSocket):
+    recent_sessions = [
+        {"id": s.id, "name": f"[{s.world_id}] {s.character_id}: {s.title[:30]}"}
+        for s in session_manager.list_recent(15)
+    ]
+    await ws.send_text(
+        build_ws_payload(
+            "sync_state",
+            "State synchronized",
+            {
+                "model": state.CURRENT_MODEL,
+                "model_confirmed": state.MODEL_CONFIRMED,
+                "world_id": state.ACTIVE_WORLD_ID,
+                "character_id": state.ACTIVE_CHARACTER_ID,
+                "session_id": state.ACTIVE_SESSION_ID,
+                "available_worlds": state.available_worlds,
+                "available_characters": state.available_characters,
+                "available_models": state.AVAILABLE_MODELS,
+                "available_rules": state.available_rules,
+                "active_rules": state.ACTIVE_RULES,
+                "available_sessions": recent_sessions,
+            },
+        )
+    )
+```
+
+**WebSocket Message:**
+
+```json
+{
+  "event": "sync_state",
+  "payload": {
+    "content": "State synchronized",
+    "metadata": {
+      "model": "google/gemini-2.0-pro-exp-02-05:free",
+      "model_confirmed": true,
+      "world_id": "fantasy_world",
+      "character_id": "elara",
+      "session_id": "a1b2c3d4e5f6",
+      "available_worlds": [
+        {"id": "fantasy_world", "name": "High Fantasy Realm"}
+      ],
+      "available_characters": [
+        {"id": "elara", "name": "Elara the Brave"}
+      ],
+      "available_models": [...],
+      "available_rules": [...],
+      "active_rules": ["gritty"],
+      "available_sessions": [
+        {"id": "a1b2c3d4e5f6", "name": "[fantasy_world] elara: Exploring the ruins"}
+      ]
+    }
+  }
+}
+```
+
+**Used By:**
+
+- `engine/main.py` - Initial connection handshake
+- `engine/commands.py` - After world/character/session/rules changes
+
+### send_chat_history
+
+Retrieves and sends the complete message history for a character's session.
+
+```python
+async def send_chat_history(ws: WebSocket, char_id: str, session_id: str) -> None
+```
+
+<ParamField path="ws" type="WebSocket" required>
+  FastAPI WebSocket connection
+</ParamField>
+
+<ParamField path="char_id" type="string" required>
+  Character ID to fetch messages for
+</ParamField>
+
+<ParamField path="session_id" type="string" required>
+  Session ID to fetch messages for
+</ParamField>
+
+**Behavior:**
+
+1. Queries the database for all messages in the session
+2. Converts messages to `{role, content}` format
+3. Sends a `chat_history` event with the message array
+
+**Source:** `engine/handlers.py:35-46`
+
+```python
+async def send_chat_history(ws: WebSocket, char_id: str, session_id: str):
+    messages = msg_manager.get_messages(char_id, session_id)
+    history = [{"role": m.role, "content": m.content} for m in messages]
+    await ws.send_text(
+        json.dumps(
+            {
+                "event": "chat_history",
+                "payload": {"content": "", "metadata": {"history": history}},
+            }
+        )
+    )
+```
+
+**WebSocket Message:**
+
+```json
+{
+  "event": "chat_history",
+  "payload": {
+    "content": "",
+    "metadata": {
+      "history": [
+        {"role": "assistant", "content": "Welcome to the realm..."},
+        {"role": "user", "content": "I look around carefully."},
+        {"role": "assistant", "content": "You see ancient ruins..."}
+      ]
+    }
+  }
+}
+```
+
+**Used By:**
+
+- `/session continue` command - Loads history when resuming a session
+
+## Usage Example
+
+```python
+from fastapi import WebSocket
+from engine.handlers import broadcast_sync_state, send_chat_history
+import engine.state as state
+
+# After a command that changes state
+async def handle_world_select(ws: WebSocket, world_id: str):
+    state.ACTIVE_WORLD_ID = world_id
+    state.save_state()
+    
+    # Notify client of state change
+    await broadcast_sync_state(ws)
+
+# When continuing a session
+async def continue_session(ws: WebSocket, session_id: str):
+    sess = session_manager.get_session(session_id)
+    if sess:
+        state.ACTIVE_SESSION_ID = sess.id
+        state.ACTIVE_WORLD_ID = sess.world_id
+        state.ACTIVE_CHARACTER_ID = sess.character_id
+        
+        # Load history first
+        await send_chat_history(ws, sess.character_id, sess.id)
+        
+        # Then sync state
+        await broadcast_sync_state(ws)
+```
+
+## Dependencies
+
+- `fastapi.WebSocket` - WebSocket connection type
+- `engine.database.msg_manager` - Message retrieval
+- `engine.database.session_manager` - Session retrieval
+- `engine.utils.build_ws_payload` - JSON payload builder
+- `engine.state` - Global state variables
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="WebSocket Protocol" icon="plug" href="/concepts/websocket-protocol">
+    Message format specification
+  </Card>
+  <Card title="State Management" icon="database" href="/api/state">
+    Global state variables
+  </Card>
+  <Card title="Commands" icon="terminal" href="/api/commands">
+    Command handlers that use these functions
+  </Card>
+  <Card title="Utils" icon="wrench" href="/api/utils">
+    WebSocket payload builder
+  </Card>
+</CardGroup>
