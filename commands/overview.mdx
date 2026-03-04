@@ -1,0 +1,98 @@
+---
+title: "Commands Overview"
+description: "Understanding the Flower Engine TUI command system"
+---
+
+## Introduction
+
+Flower Engine TUI includes a powerful command system that allows you to control and configure your storytelling sessions in real-time. All commands are entered directly into the chat interface and begin with a forward slash (`/`).
+
+## Command Categories
+
+Commands are organized into the following categories:
+
+<CardGroup cols={2}>
+  <Card title="Model Management" icon="microchip" href="/commands/model">
+    Hot-swap AI models without restarting
+  </Card>
+  <Card title="World Management" icon="globe" href="/commands/world">
+    Select worlds and attach lore
+  </Card>
+  <Card title="Character Management" icon="user" href="/commands/character">
+    Switch between characters
+  </Card>
+  <Card title="Session Management" icon="clock" href="/commands/session">
+    Create, continue, and delete sessions
+  </Card>
+  <Card title="Rules Management" icon="book-bookmark" href="/commands/rules">
+    Activate and manage content rules
+  </Card>
+</CardGroup>
+
+## Command Structure
+
+Commands follow a consistent structure:
+
+```bash
+/command [subcommand] [arguments]
+```
+
+- **command**: The primary action (e.g., `/model`, `/world`, `/session`)
+- **subcommand**: Optional secondary action (e.g., `select`, `add`, `new`)
+- **arguments**: Required parameters for the command
+
+## How Commands Work
+
+When you enter a command:
+
+1. The engine parses the command string by splitting on spaces
+2. Validates that the command exists and has required parameters
+3. Executes the command and updates engine state
+4. Sends a `system_update` event back to the client with results
+5. Broadcasts state changes to all connected clients
+
+<Info>
+Commands are processed server-side via WebSocket and provide immediate feedback through system messages.
+</Info>
+
+## Command Validation
+
+The engine validates:
+
+- **Command existence**: Unknown commands are ignored
+- **Parameter count**: Commands require specific numbers of arguments
+- **Resource existence**: IDs and file references are checked before execution
+- **Prerequisites**: Some commands require prior setup (e.g., world/character selection before creating sessions)
+
+## State Persistence
+
+Most commands automatically save state changes to disk, ensuring your configuration persists across engine restarts:
+
+- Active model selection
+- Current world and character
+- Active rules
+- Session information
+
+## Error Handling
+
+When a command fails, you'll receive a system message explaining the issue:
+
+```
+✗ Error message explaining what went wrong
+```
+
+Successful commands respond with:
+
+```
+✓ Success message confirming the action
+```
+
+## Next Steps
+
+Explore the specific command documentation:
+
+- [Model Commands](/commands/model) - Switch between AI models
+- [World Commands](/commands/world) - Manage worlds and lore
+- [Character Commands](/commands/character) - Select characters
+- [Session Commands](/commands/session) - Control session lifecycle
+- [Rules Commands](/commands/rules) - Configure content rules

@@ -1,0 +1,230 @@
+---
+title: "Dice Roll System"
+description: "Planned mechanical friction system with D20 logic and narrative complications"
+---
+
+<Info>
+This is a planned feature for Phase 1 of the Flower Engine roadmap. Implementation details may change during development.
+</Info>
+
+## Overview
+
+The dice roll system will introduce mechanical friction to the narrative experience, adding a "game" layer that creates meaningful choices and consequences. This system will implement success/failure checks using D20 logic, forcing both players and the AI to adapt to unpredictable outcomes.
+
+## Core Features
+
+### Backend Dice Roll Function
+
+A dedicated backend function will handle all dice roll mechanics:
+
+- **D20 Logic**: Standard twenty-sided die mechanics for skill checks
+- **Success/Failure Thresholds**: Configurable difficulty classes (DC) for different challenge types
+- **Roll Modifiers**: Support for character stats, situational bonuses, and penalties
+- **Roll Types**: Advantage, disadvantage, and standard rolls
+- **Result Broadcasting**: Automatic notification to the TUI via WebSocket events
+
+### Narrative Complications
+
+When a roll fails, the system will force specific narrative consequences:
+
+- **System Injection**: Automatic `[SYSTEM]` messages injected into the AI's context
+- **Failure States**: Predefined complication templates based on action type
+- **Consequence Severity**: Scaled narrative impact based on how badly the roll failed
+- **AI Narration**: The AI must incorporate the failure state into its response
+- **No Retcons**: Failed actions cannot be undone, maintaining narrative integrity
+
+### Manual Override Command
+
+Players gain control over when to engage the dice system:
+
+```bash
+/roll [skill] [modifier]
+```
+
+**Command Features:**
+- Player-initiated skill checks for any action
+- Optional skill specification (e.g., `/roll persuasion`)
+- Optional modifier input (e.g., `/roll stealth +3`)
+- Display of roll result, modifiers, and final outcome
+- Integration with character sheet stats when available
+
+## Implementation Details
+
+### Roll Calculation
+
+The system will calculate results using this formula:
+
+```
+Final Result = 1d20 + Character Modifier + Situational Modifier
+Success = Final Result >= Difficulty Class
+```
+
+### Difficulty Classes
+
+| Challenge Type | DC Range | Description |
+|---------------|----------|-------------|
+| Trivial | 5 | Routine tasks with minimal risk |
+| Easy | 10 | Standard actions requiring some skill |
+| Medium | 15 | Challenging tasks requiring expertise |
+| Hard | 20 | Difficult actions with low success probability |
+| Very Hard | 25+ | Near-impossible feats requiring exceptional ability |
+
+### System Message Format
+
+When a roll occurs, the system will inject context like:
+
+```
+[SYSTEM] Roll: Persuasion check (DC 15)
+Result: 1d20 (8) + 2 = 10 (FAILURE)
+Complication: The merchant becomes suspicious of your motives and raises prices by 20%.
+```
+
+## Use Cases
+
+### Combat Encounters
+
+- Attack rolls to determine hit/miss
+- Damage rolls for weapon strikes
+- Saving throws against enemy abilities
+- Initiative rolls for turn order
+
+### Social Interactions
+
+- Persuasion checks to convince NPCs
+- Deception rolls to lie convincingly
+- Intimidation attempts to coerce behavior
+- Insight checks to detect lies
+
+### Exploration
+
+- Perception checks to notice hidden details
+- Investigation rolls to find clues
+- Stealth checks to move undetected
+- Survival rolls to navigate wilderness
+
+## Player Experience
+
+### Tension and Stakes
+
+The dice system introduces uncertainty:
+
+- **Risk Assessment**: Players must decide when to attempt risky actions
+- **Failure Recovery**: Dealing with complications becomes part of the story
+- **Lucky Moments**: Critical successes (natural 20s) create memorable victories
+- **Dramatic Failures**: Critical failures (natural 1s) lead to unexpected complications
+
+### Transparency
+
+All rolls will be visible to the player:
+
+- Clear display of the d20 result
+- Breakdown of all modifiers applied
+- Explanation of the DC and why it was set
+- Immediate feedback on success or failure
+
+## Technical Architecture
+
+### Backend Components
+
+**New File**: `engine/dice.py`
+- `roll_d20()`: Core dice rolling function
+- `calculate_dc()`: Dynamic difficulty calculation
+- `apply_modifiers()`: Modifier stacking logic
+- `generate_complication()`: Failure state generation
+
+### WebSocket Events
+
+New event types for roll communication:
+
+```json
+{
+  "event": "dice_roll",
+  "payload": {
+    "skill": "persuasion",
+    "roll": 8,
+    "modifiers": 2,
+    "dc": 15,
+    "result": "failure",
+    "complication": "The merchant becomes suspicious..."
+  }
+}
+```
+
+### Database Schema
+
+New table for roll history:
+
+```sql
+CREATE TABLE rolls (
+  id INTEGER PRIMARY KEY,
+  session_id TEXT,
+  timestamp INTEGER,
+  skill TEXT,
+  roll INTEGER,
+  modifiers INTEGER,
+  dc INTEGER,
+  success BOOLEAN
+);
+```
+
+## Configuration
+
+Settings in `config.yaml`:
+
+```yaml
+dice_system:
+  enabled: true
+  default_dc: 15
+  critical_success: 20
+  critical_failure: 1
+  auto_roll: false  # Whether AI can trigger rolls
+  show_dc: true     # Whether DC is visible to player
+```
+
+## Integration with Existing Systems
+
+### World Rules
+
+Dice mechanics will respect world-specific rules:
+- Fantasy worlds might use standard D&D-style DCs
+- Sci-fi worlds could have different skill categories
+- Horror worlds might include sanity rolls
+
+### Character Stats
+
+Roll modifiers will pull from character data:
+- Strength, Dexterity, Wisdom, etc.
+- Proficiency bonuses
+- Equipment bonuses
+- Temporary status effects
+
+### AI Narration
+
+The LLM will be prompted to:
+- Acknowledge roll outcomes naturally
+- Narrate failures as interesting complications, not dead ends
+- Maintain story momentum regardless of roll results
+- Use success/failure to create dynamic story branches
+
+## Future Enhancements
+
+Potential expansions beyond Phase 1:
+
+- **Custom Dice**: Support for d4, d6, d8, d10, d12, d100
+- **Skill Trees**: Progression systems tied to roll success
+- **Group Rolls**: Multiple characters rolling together
+- **Contested Rolls**: PC vs. NPC opposed checks
+- **Roll History**: Statistics and analytics for player performance
+- **Roll Animations**: Visual feedback in the TUI
+
+## Design Philosophy
+
+The dice system is designed to:
+
+1. **Add Challenge**: Create meaningful obstacles that require player decision-making
+2. **Maintain Flow**: Never halt the narrative, only redirect it
+3. **Respect Choice**: Players control when to engage mechanics
+4. **Enable Drama**: Uncertainty creates memorable moments
+5. **Support AI**: Give the LLM clear hooks for narrative complications
+
+By introducing controlled randomness, the dice system transforms Flower from a pure narrative engine into a hybrid storytelling-and-gaming experience.

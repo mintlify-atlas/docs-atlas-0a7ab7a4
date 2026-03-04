@@ -1,0 +1,496 @@
+---
+title: "Sensory Anchoring"
+description: "Planned environmental clocks and atmospheric anchoring system"
+---
+
+<Info>
+This is a planned feature for Phase 3 of the Flower Engine roadmap. Implementation details may change during development.
+</Info>
+
+## Overview
+
+Sensory anchoring will ground narrative experiences in concrete physical reality through mandatory object descriptions, environmental clocks that advance world events, and dynamic atmospheric conditions. This system transforms abstract storytelling into vivid, tangible scenes that engage multiple senses.
+
+## Core Features
+
+### Object-Oriented Narration
+
+Enforce physical grounding in every AI response:
+
+- **Mandatory Object Description**: Every response must describe at least one physical object
+- **State Tracking**: Objects have conditions that change over time (wet, broken, burning)
+- **Sensory Details**: Touch, smell, sound, temperature beyond just visual description
+- **Spatial Relationships**: Clear positioning of objects and characters in space
+- **Interactive Potential**: Objects should feel manipulable and reactive to player actions
+
+### Environmental Clocks
+
+Backend timers that advance world state independently of player action:
+
+- **Persistent Timers**: Events progress even during player inactivity
+- **Scheduled Events**: Predetermined story beats that trigger at specific times
+- **Conditional Triggers**: Events that occur when certain conditions are met
+- **Cascading Consequences**: Ignored problems escalate naturally
+- **Session Continuity**: Clocks persist across disconnects and resumptions
+
+### Atmospheric Anchors
+
+Dynamic ambient conditions that evolve with the narrative:
+
+- **Weather Systems**: Rain, wind, fog, heat, cold affecting scenes
+- **Lighting Conditions**: Time of day, shadows, light sources, darkness
+- **Mood Indicators**: Emotional tone of environments (oppressive, welcoming, eerie)
+- **Soundscapes**: Ambient noise descriptions (distant thunder, crowd murmur, silence)
+- **Scent Profiles**: Smell descriptions that anchor scenes (sea salt, smoke, rot)
+
+## Implementation Details
+
+### System Rules Update
+
+Add to AI's `SYSTEM RULES`:
+
+```
+OBJECT-ORIENTED NARRATION REQUIREMENTS:
+
+1. MANDATORY PHYSICAL GROUNDING:
+   - Every response must describe at least one physical object in detail
+   - Objects must have tangible properties: texture, weight, temperature, appearance
+   - Describe how the object relates to the immediate scene and action
+   - Include sensory details beyond sight: sound, smell, touch, taste when relevant
+
+2. ENVIRONMENTAL AWARENESS:
+   - Integrate current weather, lighting, and atmospheric conditions naturally
+   - Objects should reflect environmental effects (wet from rain, warm from sun)
+   - Characters interact with environment (brushing away fog, shading eyes)
+
+3. STATE PERSISTENCE:
+   - Objects maintain consistent state unless acted upon
+   - Describe changes to object states when they occur
+   - Broken things stay broken, moved things stay moved
+
+EXAMPLE - Poor (Abstract):
+"You enter the tavern. It's busy. The bartender looks at you."
+
+EXAMPLE - Good (Anchored):
+"You push through the tavern's heavy oak door, its iron handle 
+cold and slightly damp from the evening fog. The air inside 
+hits you—warm, thick with the smell of spilled ale and wood 
+smoke from the stone hearth crackling in the corner. The 
+bartender, polishing a cloudy glass with a stained rag, glances 
+up. Condensation beads on the glass's surface, catching the 
+flickering firelight."
+```
+
+### Environmental Clock System
+
+Backend timer architecture:
+
+```python
+class EnvironmentalClock:
+    def __init__(self, event_id: str, trigger_time: int, description: str):
+        self.event_id = event_id
+        self.trigger_time = trigger_time  # Unix timestamp
+        self.description = description
+        self.triggered = False
+        self.conditions = []  # Optional prerequisite conditions
+    
+    def check_trigger(self, current_time: int, world_state: dict) -> bool:
+        """Returns True if clock should fire"""
+        if self.triggered:
+            return False
+        
+        if current_time < self.trigger_time:
+            return False
+        
+        # Check if all conditions met
+        for condition in self.conditions:
+            if not condition.evaluate(world_state):
+                return False
+        
+        return True
+    
+    def execute(self, websocket) -> str:
+        """Fires the event and returns narrative text"""
+        self.triggered = True
+        # Generate system message to inject into narrative
+        return f"[ENVIRONMENTAL EVENT] {self.description}"
+```
+
+### Clock Types
+
+#### Time-Based Clocks
+
+Trigger after a specific duration:
+
+```json
+{
+  "event_id": "tavern_closing_time",
+  "type": "time_based",
+  "trigger_after_seconds": 7200,
+  "description": "The tavern keeper begins ushering patrons toward the door, announcing last call.",
+  "repeating": false
+}
+```
+
+#### Condition-Based Clocks
+
+Trigger when world state matches criteria:
+
+```json
+{
+  "event_id": "storm_arrives",
+  "type": "condition_based",
+  "conditions": [
+    {"weather": "cloudy"},
+    {"player_location": "outdoors"},
+    {"time_of_day": "afternoon"}
+  ],
+  "description": "Dark clouds roll in from the west. The first fat raindrops begin to fall, quickly building to a steady downpour.",
+  "atmospheric_change": {"weather": "heavy_rain", "visibility": "reduced"}
+}
+```
+
+#### Escalation Clocks
+
+Intensify if player ignores a problem:
+
+```json
+{
+  "event_id": "fire_spreads",
+  "type": "escalation",
+  "stages": [
+    {
+      "delay_seconds": 300,
+      "description": "Smoke begins seeping under doorways. You hear distant crackling.",
+      "severity": 1
+    },
+    {
+      "delay_seconds": 600,
+      "description": "Orange light flickers through windows. The heat is noticeable now, and smoke fills the hallway.",
+      "severity": 3
+    },
+    {
+      "delay_seconds": 900,
+      "description": "Flames burst through the western wall. The building groans ominously as structural beams begin to fail.",
+      "severity": 5
+    }
+  ],
+  "interrupt_condition": {"player_action": "extinguish_fire"}
+}
+```
+
+### Atmospheric Anchor System
+
+Dynamic ambient conditions tracked in world state:
+
+```json
+{
+  "current_atmosphere": {
+    "weather": {
+      "condition": "light_rain",
+      "temperature": 52,
+      "wind": "gentle",
+      "visibility": "good"
+    },
+    "lighting": {
+      "time_of_day": "dusk",
+      "ambient_level": "dim",
+      "primary_source": "fading_sunlight",
+      "shadows": "long",
+      "color_cast": "orange_and_purple"
+    },
+    "mood": {
+      "tone": "melancholic",
+      "tension": "low",
+      "energy": "quiet"
+    },
+    "soundscape": [
+      "gentle rainfall on cobblestones",
+      "distant church bells",
+      "muffled conversations from nearby tavern"
+    ],
+    "scents": [
+      "wet stone",
+      "woodsmoke from chimneys",
+      "fresh bread from the bakery"
+    ]
+  }
+}
+```
+
+### Atmospheric Transitions
+
+Gradual shifts that feel natural:
+
+```python
+class AtmosphericTransition:
+    def __init__(self, from_state: dict, to_state: dict, duration_seconds: int):
+        self.from_state = from_state
+        self.to_state = to_state
+        self.duration = duration_seconds
+        self.start_time = None
+    
+    def get_current_state(self, current_time: int) -> dict:
+        """Interpolate between states based on elapsed time"""
+        if not self.start_time:
+            self.start_time = current_time
+        
+        elapsed = current_time - self.start_time
+        progress = min(1.0, elapsed / self.duration)
+        
+        # Interpolate atmospheric values
+        return self._interpolate(self.from_state, self.to_state, progress)
+```
+
+**Example Transition:**
+
+```
+Dusk → Night (30 minutes)
+- Lighting: dim → dark
+- Ambient sounds: birds → crickets
+- Temperature: 68°F → 58°F
+- Visibility: good → limited
+- Mood: peaceful → mysterious
+```
+
+## Database Schema
+
+### Environmental Clocks Table
+
+```sql
+CREATE TABLE environmental_clocks (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,  -- 'time_based', 'condition_based', 'escalation'
+  trigger_time INTEGER,
+  conditions TEXT,            -- JSON
+  description TEXT NOT NULL,
+  triggered BOOLEAN DEFAULT 0,
+  triggered_at INTEGER,
+  repeating BOOLEAN DEFAULT 0,
+  repeat_interval INTEGER,
+  active BOOLEAN DEFAULT 1
+);
+```
+
+### Atmospheric State Table
+
+```sql
+CREATE TABLE atmospheric_state (
+  session_id TEXT PRIMARY KEY,
+  weather_condition TEXT,
+  temperature INTEGER,
+  time_of_day TEXT,
+  lighting_level TEXT,
+  mood_tone TEXT,
+  soundscape TEXT,            -- JSON array
+  scents TEXT,                -- JSON array
+  last_updated INTEGER
+);
+```
+
+### Object State Table
+
+```sql
+CREATE TABLE scene_objects (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  location TEXT,
+  state TEXT,                 -- 'intact', 'damaged', 'broken', etc.
+  properties TEXT,            -- JSON (texture, temperature, weight, etc.)
+  last_mentioned INTEGER,
+  persistent BOOLEAN DEFAULT 0
+);
+```
+
+## Use Cases
+
+### Mystery Investigation
+
+Environmental details provide clues:
+
+- **Object State**: "The candle has burned down halfway—it's been lit for about three hours."
+- **Weather Clue**: "The muddy footprints lead inside, but the rain only started an hour ago."
+- **Atmospheric Mood**: The oppressive silence in the manor amplifies tension
+- **Sensory Detail**: "You catch a faint whiff of almond—cyanide poisoning?"
+
+### Survival Scenario
+
+Environment becomes an active challenge:
+
+- **Clock**: Temperature drops 5°F every 30 minutes
+- **Consequence**: Player must find shelter or face hypothermia
+- **Object Focus**: "The frost forming on your water flask warns that night is coming."
+- **Atmospheric Pressure**: Wind howling, visibility near zero, disorientation
+
+### Combat Dynamics
+
+Environment affects tactical options:
+
+- **Lighting**: "The flickering torch creates dancing shadows—hard to aim."
+- **Weather**: "Rain makes the stone stairs treacherously slick."
+- **Objects**: "You grab the iron candlestick from the table—heavy, cold, improvised weapon."
+- **Soundscape**: "Thunder masks the sound of your footsteps on the wooden floor."
+
+### Romantic Scene
+
+Atmosphere sets emotional tone:
+
+- **Sensory Grounding**: "Rose petals float in the marble fountain, releasing subtle fragrance."
+- **Lighting**: "Candlelight casts warm amber glow, softening sharp edges."
+- **Soundscape**: "Distant string quartet drifts through the garden, mixing with fountain's gentle splash."
+- **Weather**: "Cool evening breeze carries jasmine scent from the hedge maze."
+
+## Technical Architecture
+
+### Backend Components
+
+**New File**: `engine/environment.py`
+- `AtmosphericState`: Class managing current conditions
+- `EnvironmentalClock`: Class for timed events
+- `ObjectRegistry`: Track scene objects and states
+- `advance_clocks()`: Check and trigger pending events
+- `transition_atmosphere()`: Smooth environmental changes
+- `inject_atmospheric_context()`: Add environment to AI prompt
+
+**Modified File**: `engine/llm.py`
+- Inject atmospheric context before each AI response
+- Enforce object-description validation
+- Parse object state changes from AI output
+
+### WebSocket Events
+
+New events for environmental system:
+
+```json
+{
+  "event": "clock_triggered",
+  "payload": {
+    "event_id": "storm_arrives",
+    "description": "Dark clouds roll in...",
+    "atmospheric_changes": {"weather": "rain"}
+  }
+}
+```
+
+```json
+{
+  "event": "atmosphere_changed",
+  "payload": {
+    "previous": {"lighting": "dim"},
+    "current": {"lighting": "dark"},
+    "description": "The last light fades from the sky..."
+  }
+}
+```
+
+### Commands
+
+**Player Commands:**
+```bash
+/time                 # Show current in-world time and conditions
+/weather              # Display current weather and forecast
+/atmosphere           # View full atmospheric state
+/clocks               # List active environmental clocks
+```
+
+**Admin Commands:**
+```bash
+/set_weather [condition]
+/set_time [hour]
+/add_clock [event] [duration]
+/skip_time [minutes]
+```
+
+## AI Integration
+
+### Context Injection
+
+Before each AI response, inject:
+
+```
+[CURRENT ATMOSPHERE]
+Time: Late evening (8:47 PM)
+Weather: Light rain, 52°F, gentle wind from the west
+Lighting: Dim twilight transitioning to darkness; streetlamps just lit
+Ambient Sounds: Rainfall on cobblestones, distant tavern music, church bells
+Scents: Wet stone, woodsmoke, fresh bread
+Mood: Melancholic, peaceful, slightly mysterious
+
+[ENVIRONMENTAL EVENTS]
+- Tavern will close in approximately 2 hours
+- Rain will intensify within 30 minutes
+
+[SCENE OBJECTS]
+- Cobblestone street: wet, reflecting lamplight, uneven surface
+- Iron lamppost: cold to touch, flickering gas flame inside
+- Wooden tavern door: heavy oak, brass handle, slightly ajar
+```
+
+### Validation
+
+Check AI responses for required elements:
+
+```python
+def validate_object_description(response_text: str) -> bool:
+    """Ensure response includes physical object description"""
+    # Check for concrete nouns
+    # Check for sensory adjectives
+    # Check for state descriptions
+    # Reject if too abstract
+    pass
+```
+
+If validation fails, prepend request:
+
+```
+[SYSTEM CORRECTION] Your previous response lacked physical grounding. 
+Please revise to include detailed description of at least one tangible 
+object in the scene, including its texture, temperature, or other 
+sensory properties.
+```
+
+## Configuration
+
+Settings in `config.yaml`:
+
+```yaml
+sensory_anchoring:
+  enabled: true
+  enforce_object_descriptions: true
+  min_sensory_details: 2        # Minimum senses engaged per response
+  environmental_clocks: true
+  clock_check_interval: 60      # Seconds between clock evaluations
+  atmospheric_transitions: true
+  transition_duration: 1800     # Default transition time (seconds)
+  weather_enabled: true
+  time_progression: true
+  time_scale: 1.0               # Real seconds per in-game minute
+```
+
+## Future Enhancements
+
+Potential expansions beyond Phase 3:
+
+- **Seasonal Cycles**: Long-term environmental changes
+- **Object Physics**: More sophisticated state interactions
+- **Scent Memory**: NPCs react to familiar smells
+- **Echo System**: Spatial audio descriptions based on room acoustics
+- **Temperature Effects**: Mechanical impact on character performance
+- **Object Durability**: Wear and tear over time
+- **Weather Forecasting**: NPCs predict upcoming conditions
+- **Ritual Timing**: Magic or events tied to specific times/conditions
+
+## Design Philosophy
+
+The sensory anchoring system is designed to:
+
+1. **Ground Abstraction**: Transform vague narration into concrete experiences
+2. **Engage Senses**: Move beyond visual-only descriptions
+3. **Create Urgency**: Clocks add time pressure and consequences
+4. **Enhance Immersion**: Rich sensory detail draws players deeper into scenes
+5. **Support Continuity**: Persistent objects and states maintain world consistency
+
+By enforcing physical specificity and environmental dynamism, sensory anchoring transforms Flower from a dialogue engine into a fully-realized world that feels alive, reactive, and tangible.

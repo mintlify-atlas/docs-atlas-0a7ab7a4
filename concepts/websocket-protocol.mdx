@@ -1,0 +1,672 @@
+---
+title: WebSocket protocol
+description: JSON message format for communication between Python brain and Rust face
+icon: plug
+---
+
+## Protocol Overview
+
+Flower Engine uses a **JSON-based WebSocket protocol (V1)** for bidirectional communication between the FastAPI backend and Ratatui TUI.
+
+<Info>
+  **Connection**: `ws://localhost:8000/ws/rpc`
+  
+  **Format**: Text frames containing JSON objects
+</Info>
+
+## Message Structure
+
+All messages follow a uniform envelope format:
+
+```json
+{
+  "event": "event_type",
+  "payload": {
+    "content": "message content",
+    "metadata": {
+      // Optional contextual data
+    }
+  }
+}
+```
+
+### Type Definitions
+
+From `tui/src/models.rs:14-44`:
+
+```rust
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct WsMessage {
+    pub event: String,
+    pub payload: Payload,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Payload {
+    pub content: String,
+    #[serde(default)]
+    pub metadata: Metadata,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct Metadata {
+    pub model: Option<String>,
+    pub model_confirmed: Option<bool>,
+    pub tokens_per_second: Option<f64>,
+    pub world_id: Option<String>,
+    pub character_id: Option<String>,
+    pub status: Option<String>,
+    pub total_tokens: Option<u32>,
+    pub available_worlds: Option<Vec<EntityInfo>>,
+    pub available_characters: Option<Vec<EntityInfo>>,
+    pub available_models: Option<Vec<EntityInfo>>,
+    pub available_rules: Option<Vec<EntityInfo>>,
+    pub active_rules: Option<Vec<String>>,
+    pub available_sessions: Option<Vec<EntityInfo>>,
+    pub session_id: Option<String>,
+    pub history: Option<Vec<HistoryMessage>>,
+}
+```
+
+<Tip>
+  **Metadata is always optional**. Clients should gracefully handle missing fields using `Option<T>` (Rust) or `dict.get()` (Python).
+</Tip>
+
+## Client → Server Messages
+
+### User Input
+
+From `tui/src/ws.rs:49-62`, the TUI sends user prompts:
+
+```rust
+let json_msg = serde_json::json!({ "prompt": out_msg });
+write.send(Message::Text(json_msg.to_string())).await?;
+```
+
+**Example**:
+```json
+{
+  "prompt": "I examine the ancient door for traps."
+}
+```
+
+### Commands
+
+Commands are prompts prefixed with `/`:
+
+```json
+{"prompt": "/world select cyberpunk_city"}
+{"prompt": "/character select mercenary"}
+{"prompt": "/session new"}
+{"prompt": "/model anthropic/claude-3.5-sonnet"}
+{"prompt": "/rules add gritty"}
+{"prompt": "/cancel"}
+```
+
+From `engine/main.py:169-171`, commands are routed to a dedicated handler:
+
+```python
+if prompt.startswith("/"):
+    await handle_command(prompt, websocket)
+    continue
+```
+
+<Warning>
+  **Special case**: `/cancel` during LLM streaming triggers `asyncio.CancelledError` (see `engine/main.py:239`).
+</Warning>
+
+## Server → Client Events
+
+### `system_update`
+
+System notifications and confirmations.
+
+**Example**:
+```json
+{
+  "event": "system_update",
+  "payload": {
+    "content": "✓ Engine ready.",
+    "metadata": {
+      "status": "ok"
+    }
+  }
+}
+```
+
+From `engine/utils.py:7-14`, the builder function:
+
+```python
+def build_ws_payload(event: str, content: str, metadata: Dict[str, Any] = None) -> str:
+    return json.dumps({
+        "event": event,
+        "payload": {
+            "content": content,
+            "metadata": metadata or {}
+        }
+    })
+```
+
+**Common Uses**:
+- Connection established: `"✓ Engine ready."`
+- World selected: `"✓ World 'cyberpunk_city' activated."`
+- Session created: `"✓ New session started."`
+- Error messages: `"✗ No character selected."`
+
+From `tui/src/main.rs:112-123`, the TUI displays these as system messages:
+
+```rust
+"system_update" => {
+    app.add_system_message(msg.payload.content);
+    if let Some(model) = msg.payload.metadata.model { 
+        app.active_model = model;
+    }
+}
+```
+
+### `sync_state`
+
+Complete state synchronization, sent after connection and after state-changing commands.
+
+**Example**:
+```json
+{
+  "event": "sync_state",
+  "payload": {
+    "content": "Synced",
+    "metadata": {
+      "model": "anthropic/claude-3.5-sonnet",
+      "model_confirmed": true,
+      "world_id": "cyberpunk_city",
+      "character_id": "mercenary",
+      "session_id": "550e8400-e29b-41d4-a716-446655440000",
+      "available_worlds": [
+        {"id": "cyberpunk_city", "name": "Neo-Tokyo 2077"},
+        {"id": "fantasy_realm", "name": "Eldoria"}
+      ],
+      "available_characters": [
+        {"id": "mercenary", "name": "Kira Chen"}
+      ],
+      "available_models": [
+        {
+          "id": "anthropic/claude-3.5-sonnet",
+          "name": "[OpenRouter] Claude 3.5 Sonnet",
+          "prompt_price": 3.0,
+          "completion_price": 15.0
+        }
+      ],
+      "available_rules": [
+        {"id": "gritty", "name": "Gritty Realism"}
+      ],
+      "active_rules": ["gritty"],
+      "available_sessions": [
+        {"id": "550e8400...", "name": "I examine the ancient door"}
+      ]
+    }
+  }
+}
+```
+
+From `tui/src/main.rs:77-102`, the TUI updates all UI state:
+
+```rust
+"sync_state" => {
+    app.status = "Synced".to_string();
+    if let Some(model) = msg.payload.metadata.model { 
+        app.active_model = model.clone();
+        // Update pricing info
+        if let Some(info) = app.available_models.iter().find(|m| m.id == model) {
+            app.active_prompt_price = info.prompt_price;
+            app.active_completion_price = info.completion_price;
+        }
+    }
+    if let Some(w_id) = msg.payload.metadata.world_id { 
+        app.world_id = w_id; 
+    }
+    if let Some(worlds) = msg.payload.metadata.available_worlds { 
+        app.available_worlds = worlds; 
+    }
+    // ... update 10+ UI fields
+}
+```
+
+<Tip>
+  **When to send**: After connection, after `/world select`, `/character select`, `/model`, `/rules add`, `/session new/continue`.
+</Tip>
+
+### `chat_history`
+
+Session message history, sent when loading a session.
+
+**Example**:
+```json
+{
+  "event": "chat_history",
+  "payload": {
+    "content": "",
+    "metadata": {
+      "history": [
+        {"role": "user", "content": "I examine the door."},
+        {"role": "assistant", "content": "You notice faint scratches..."}
+      ]
+    }
+  }
+}
+```
+
+From `tui/src/main.rs:104-111`:
+
+```rust
+"chat_history" => {
+    if let Some(history) = msg.payload.metadata.history {
+        let converted = history.into_iter()
+            .map(|m| (m.role, m.content))
+            .collect();
+        app.load_history(converted);
+    }
+}
+```
+
+### `chat_chunk`
+
+Real-time LLM token streaming.
+
+**Example**:
+```json
+{
+  "event": "chat_chunk",
+  "payload": {
+    "content": "You notice ",
+    "metadata": {
+      "model": "anthropic/claude-3.5-sonnet",
+      "tokens_per_second": 42.7
+    }
+  }
+}
+```
+
+From `engine/llm.py:206-220`, tokens are streamed as they arrive:
+
+```python
+async for chunk in response:
+    delta = chunk.choices[0].delta.content if chunk.choices else None
+    if delta:
+        full_content += delta
+        total_tokens += 1
+        elapsed = time.time() - start_time
+        tps = total_tokens / elapsed if elapsed > 0 else 0.0
+        
+        metadata = {
+            "model": state.CURRENT_MODEL,
+            "tokens_per_second": round(tps, 2),
+        }
+        await ws.send_text(build_ws_payload("chat_chunk", delta, metadata))
+```
+
+From `tui/src/main.rs:124-135`, the TUI appends each chunk immediately:
+
+```rust
+"chat_chunk" => {
+    app.append_chunk(&msg.payload.content);
+    if let Some(tps) = msg.payload.metadata.tokens_per_second { 
+        app.tps = tps; 
+    }
+    if let Some(model) = msg.payload.metadata.model { 
+        app.active_model = model.clone();
+    }
+}
+```
+
+<Check>
+  **Result**: Typewriter effect with live tokens/sec counter.
+</Check>
+
+### `chat_end`
+
+Signals completion of LLM response.
+
+**Example**:
+```json
+{
+  "event": "chat_end",
+  "payload": {
+    "content": "",
+    "metadata": {
+      "total_tokens": 347
+    }
+  }
+}
+```
+
+From `engine/llm.py:229-231`:
+
+```python
+finally:
+    await ws.send_text(
+        build_ws_payload("chat_end", "", {"total_tokens": total_tokens})
+    )
+```
+
+From `tui/src/main.rs:136-140`:
+
+```rust
+"chat_end" => {
+    if let Some(total) = msg.payload.metadata.total_tokens { 
+        app.total_tokens += total; 
+    }
+    app.finish_stream();
+    app.status = "Idle".to_string();
+}
+```
+
+<Info>
+  **Metadata tracking**: `total_tokens` accumulates across the session for cost estimation.
+</Info>
+
+### `error`
+
+Error notifications (non-fatal).
+
+**Example**:
+```json
+{
+  "event": "error",
+  "payload": {
+    "content": "Model not found: invalid/model-id",
+    "metadata": {}
+  }
+}
+```
+
+From `engine/llm.py:225-227`:
+
+```python
+except Exception as e:
+    log.error(f"Error during streaming: {e}")
+    await ws.send_text(build_ws_payload("error", str(e)))
+    return
+```
+
+From `tui/src/main.rs:141-144`:
+
+```rust
+"error" => {
+    app.add_system_message(format!("✗ {}", msg.payload.content));
+    app.is_typing = false;
+}
+```
+
+## Connection Lifecycle
+
+<Steps>
+  <Step title="TUI Connects">
+    Rust client attempts WebSocket connection to `ws://localhost:8000/ws/rpc`
+    
+    From `tui/src/ws.rs:15-22`:
+    ```rust
+    let ws_stream = loop {
+        match connect_async(url.clone()).await {
+            Ok((stream, _)) => break stream,
+            Err(_) => {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    };
+    ```
+  </Step>
+  
+  <Step title="Backend Accepts">
+    Python FastAPI accepts connection:
+    
+    ```python
+    @app.websocket("/ws/rpc")
+    async def websocket_endpoint(websocket: WebSocket):
+        await websocket.accept()
+    ```
+  </Step>
+  
+  <Step title="Initial Handshake">
+    Backend sends `system_update` ("✓ Engine ready.") then `sync_state` with full initial state
+  </Step>
+  
+  <Step title="Active Session">
+    - TUI sends `{"prompt": "..."}`
+    - Backend responds with `chat_chunk` stream → `chat_end`
+    - Commands trigger `system_update` + `sync_state`
+  </Step>
+  
+  <Step title="Disconnection">
+    - User quits TUI (Esc)
+    - WebSocket closes gracefully
+    - Backend cleans up resources
+  </Step>
+</Steps>
+
+## Error Handling
+
+### Client-Side (Rust)
+
+From `tui/src/ws.rs:28-46`:
+
+```rust
+while let Some(msg) = read.next().await {
+    match msg {
+        Ok(Message::Text(text)) => {
+            if let Ok(ws_msg) = serde_json::from_str::<WsMessage>(&text) {
+                tx.send(ws_msg).unwrap();
+            } else {
+                // Log but don't crash
+                eprintln!("Failed to parse WS message: {}", text);
+            }
+        }
+        Ok(Message::Close(_)) => break,
+        Err(_) => break,
+        _ => {}
+    }
+}
+```
+
+<Check>
+  **Graceful degradation**: Malformed JSON is logged, not crashed.
+</Check>
+
+### Server-Side (Python)
+
+From `engine/main.py:161-167`:
+
+```python
+data = await websocket.receive_text()
+try:
+    msg = json.loads(data)
+    prompt = msg.get("prompt", "")
+except:
+    prompt = data  # Fallback to raw string
+```
+
+<Tip>
+  **Lenient parsing**: If JSON parsing fails, treat the entire message as a prompt string.
+</Tip>
+
+## Message Examples
+
+### Complete Interaction Flow
+
+<Accordion title="1. Connection" icon="plug">
+  **Backend → TUI**:
+  ```json
+  {"event": "system_update", "payload": {"content": "✓ Engine ready.", "metadata": {"status": "ok"}}}
+  {"event": "sync_state", "payload": {"content": "Synced", "metadata": {...}}}
+  ```
+</Accordion>
+
+<Accordion title="2. World Selection" icon="globe">
+  **TUI → Backend**:
+  ```json
+  {"prompt": "/world select cyberpunk_city"}
+  ```
+  
+  **Backend → TUI**:
+  ```json
+  {"event": "system_update", "payload": {"content": "✓ World 'cyberpunk_city' activated.", "metadata": {}}}
+  {"event": "sync_state", "payload": {"content": "Synced", "metadata": {"world_id": "cyberpunk_city", ...}}}
+  ```
+</Accordion>
+
+<Accordion title="3. Session Start" icon="play">
+  **TUI → Backend**:
+  ```json
+  {"prompt": "/session new"}
+  ```
+  
+  **Backend → TUI**:
+  ```json
+  {"event": "system_update", "payload": {"content": "✓ New session started.", "metadata": {"session_id": "550e8400-e29b..."}}}
+  {"event": "chat_chunk", "payload": {"content": "The ", "metadata": {}}}
+  {"event": "chat_chunk", "payload": {"content": "neon ", "metadata": {"tokens_per_second": 38.2}}}
+  {"event": "chat_chunk", "payload": {"content": "lights ", "metadata": {"tokens_per_second": 41.5}}}
+  // ... more chunks
+  {"event": "chat_end", "payload": {"content": "", "metadata": {"total_tokens": 127}}}
+  ```
+</Accordion>
+
+<Accordion title="4. User Prompt" icon="message">
+  **TUI → Backend**:
+  ```json
+  {"prompt": "I examine the door for traps."}
+  ```
+  
+  **Backend → TUI** (stream):
+  ```json
+  {"event": "chat_chunk", "payload": {"content": "You ", "metadata": {"tokens_per_second": 45.1}}}
+  {"event": "chat_chunk", "payload": {"content": "crouch ", "metadata": {"tokens_per_second": 46.3}}}
+  // ... full response
+  {"event": "chat_end", "payload": {"content": "", "metadata": {"total_tokens": 89}}}
+  ```
+</Accordion>
+
+<Accordion title="5. Cancellation" icon="xmark">
+  **TUI → Backend** (during stream):
+  ```json
+  {"prompt": "/cancel"}
+  ```
+  
+  **Backend → TUI**:
+  ```json
+  {"event": "system_update", "payload": {"content": "✗ Stream cancelled by user.", "metadata": {}}}
+  ```
+</Accordion>
+
+## Protocol Versioning
+
+The current protocol is **V1** (implicit). Future versions may add:
+
+<CardGroup cols={2}>
+  <Card title="Compression" icon="file-zipper">
+    gzip for large lore chunks
+  </Card>
+  <Card title="Binary Frames" icon="binary">
+    MessagePack for reduced overhead
+  </Card>
+  <Card title="Subscriptions" icon="bell">
+    Event filtering (e.g., "only errors")
+  </Card>
+  <Card title="Authentication" icon="lock">
+    Token-based auth for remote connections
+  </Card>
+</CardGroup>
+
+<Note>
+  **Breaking changes** will increment the protocol version (e.g., `ws://localhost:8000/ws/v2/rpc`).
+</Note>
+
+## Implementation Tips
+
+### Python Backend
+
+<CodeGroup>
+```python Sending Events
+from engine.utils import build_ws_payload
+
+# System notification
+await websocket.send_text(
+    build_ws_payload("system_update", "✓ World loaded.", {"world_id": "my_world"})
+)
+
+# State sync
+await websocket.send_text(
+    build_ws_payload("sync_state", "Synced", {
+        "world_id": state.ACTIVE_WORLD_ID,
+        "character_id": state.ACTIVE_CHARACTER_ID,
+        "available_worlds": world_list,
+        # ... all state fields
+    })
+)
+
+# Token streaming
+for token in llm_stream:
+    await websocket.send_text(
+        build_ws_payload("chat_chunk", token, {"tokens_per_second": tps})
+    )
+```
+
+```python Receiving Messages
+while True:
+    data = await websocket.receive_text()
+    try:
+        msg = json.loads(data)
+        prompt = msg.get("prompt", "")
+    except:
+        prompt = data
+    
+    if prompt.startswith("/"):
+        await handle_command(prompt, websocket)
+    else:
+        await handle_user_input(prompt, websocket)
+```
+</CodeGroup>
+
+### Rust Client
+
+<CodeGroup>
+```rust Sending Prompts
+let json_msg = serde_json::json!({ "prompt": user_input });
+write.send(Message::Text(json_msg.to_string())).await?;
+```
+
+```rust Receiving Events
+while let Some(msg) = read.next().await {
+    match msg {
+        Ok(Message::Text(text)) => {
+            if let Ok(ws_msg) = serde_json::from_str::<WsMessage>(&text) {
+                match ws_msg.event.as_str() {
+                    "system_update" => { /* Handle */ }
+                    "sync_state" => { /* Handle */ }
+                    "chat_chunk" => { /* Append to UI */ }
+                    "chat_end" => { /* Finalize */ }
+                    "error" => { /* Display error */ }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+}
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture Overview" icon="diagram-project" href="/concepts/architecture">
+    See how components interact
+  </Card>
+  <Card title="Split-Brain Design" icon="brain" href="/concepts/split-brain">
+    Understand the Python/Rust separation
+  </Card>
+  <Card title="System Rules" icon="gavel" href="/concepts/system-rules">
+    Learn the narrative constraints
+  </Card>
+  <Card title="Development Guide" icon="code" href="/development/setup">
+    Build your own extensions
+  </Card>
+</CardGroup>

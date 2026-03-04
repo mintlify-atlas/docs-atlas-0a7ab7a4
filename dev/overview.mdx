@@ -1,0 +1,325 @@
+---
+title: "Contributing Overview"
+description: "Guide to contributing to Flower Engine - project structure, setup, and development workflow"
+---
+
+## Welcome to Flower Engine Development
+
+Flower Engine is a split-architecture narrative system with a Python FastAPI backend and Rust Ratatui terminal UI. This guide will help you set up your development environment and understand the project structure.
+
+## Architecture Overview
+
+The Flower uses a decoupled architecture:
+
+```text
+[ THE FACE ]             [ THE BRAIN ]
+(Rust / Ratatui)         (Python / FastAPI)
+      |                         |
+ TUI Interface <--- WebSocket ---> LLM Orchestrator
+      |            (JSON)              |
+ Async Input                    RAG (ChromaDB)
+ Event Loop                     SQLite Persistence
+```
+
+- **Python Brain** (`engine/`): FastAPI backend with WebSocket server, SQLite database, LLM integration
+- **Rust Face** (`tui/`): Ratatui-based terminal UI communicating via WebSockets
+
+## Project Structure
+
+```
+flower-engine/
+├── engine/                 # Python FastAPI backend
+│   ├── main.py            # FastAPI app + WebSocket handler
+│   ├── commands.py        # Command handlers (/model, /world, etc.)
+│   ├── database.py        # SQLite + Pydantic models
+│   ├── config.py          # Configuration loader
+│   ├── state.py           # Global state + persistence
+│   ├── rag.py             # RAG/chromadb integration
+│   ├── llm.py             # LLM streaming logic
+│   ├── handlers.py        # Broadcast helpers
+│   ├── utils.py           # Utilities
+│   └── logger.py          # Logging setup
+├── tui/                    # Rust TUI
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs        # Entry point + event loop
+│       ├── app.rs         # App state + logic
+│       ├── models.rs      # WebSocket message types
+│       ├── ws.rs          # WebSocket client
+│       └── ui/            # UI rendering
+├── assets/                # Game assets (gitignored)
+│   ├── worlds/
+│   ├── characters/
+│   └── rules/
+├── config.yaml            # Configuration
+├── engine.db              # SQLite database
+└── persist.json           # State persistence
+```
+
+## Prerequisites
+
+Before contributing, ensure you have:
+
+- **Python 3.12+**
+- **Rust & Cargo** (latest stable)
+- **Git**
+- **API Keys** (OpenRouter, Google Gemini, Groq, or DeepSeek)
+
+### System Requirements
+
+- **OS**: Linux, macOS, or Windows (WSL2 recommended)
+- **Memory**: 4GB+ RAM (embeddings run on CPU)
+- **Disk**: ~1GB
+
+## Initial Setup
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/ritz541/flower-engine.git
+cd flower-engine
+```
+
+### 2. Run Setup Script
+
+The automated setup handles virtual environment creation and dependencies:
+
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+This script will:
+- Check for Python 3.12+ and Rust/Cargo
+- Create a Python virtual environment
+- Install Python dependencies (optimized for CPU)
+- Copy `assets_example/` to `assets/`
+- Copy `config.yaml.example` to `config.yaml`
+
+### 3. Configure API Keys
+
+Edit `config.yaml` and add your API keys:
+
+```yaml
+# Engine Configuration
+database_path: "./chroma_db"
+
+# LLM Providers
+openai_base_url: "https://openrouter.ai/api/v1"
+openai_api_key: "sk-or-v1-YOUR_KEY_HERE"
+
+deepseek_api_key: "sk-YOUR_KEY_HERE"
+
+gemini_api_key: "AIzaSy..."
+
+# Default model
+default_model: "google/gemini-2.0-pro-exp-02-05:free"
+```
+
+**Note**: `config.yaml` is gitignored and should NEVER be committed.
+
+### 4. Manual Installation (Alternative)
+
+If you prefer manual setup:
+
+```bash
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install Python dependencies (CPU-optimized)
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+
+# Copy assets and config
+cp -r assets_example assets
+cp config.yaml.example config.yaml
+
+# Edit config.yaml with your API keys
+```
+
+## Development Workflow
+
+### Running the Full System
+
+Use the start script to launch both backend and TUI:
+
+```bash
+./start.sh
+```
+
+This will:
+1. Start the FastAPI backend on port 8000
+2. Wait for backend readiness
+3. Launch the Rust TUI in full-screen mode
+
+### Running Components Separately
+
+For development, you often want to run components independently:
+
+#### Backend Only
+
+```bash
+# With auto-reload
+python -m uvicorn engine.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Or directly
+venv/bin/python engine/main.py
+```
+
+The backend will be available at `http://localhost:8000`
+
+WebSocket endpoint: `ws://localhost:8000/ws/rpc`
+
+#### TUI Only
+
+```bash
+cd tui
+
+# Development build
+cargo run
+
+# Release build (optimized)
+cargo run --release
+
+# Just build without running
+cargo build
+```
+
+**Note**: The TUI requires the backend to be running on port 8000.
+
+## Asset Files
+
+Assets are YAML files defining worlds, characters, and rules:
+
+- **Location**: `assets/`
+- **Format**: YAML (`.yaml`)
+- **Structure**: Each asset has an `id` field plus type-specific fields
+- **Loading**: `engine/utils.py::load_yaml_assets(pattern)`
+
+### Example World Asset
+
+```yaml
+id: "darkwood"
+name: "Darkwood Forest"
+lore: |
+  A mysterious forest where shadows move independently.
+  Ancient ruins lie beneath the canopy.
+start_message: "You stand at the edge of the Darkwood..."
+scene: "A misty forest path stretches before you."
+system_prompt: "You are a dark fantasy narrator."
+```
+
+### Example Character Asset
+
+```yaml
+id: "ranger"
+name: "Elara the Ranger"
+persona: |
+  A skilled tracker who knows the wilderness.
+  Speaks sparingly but with authority.
+```
+
+## Configuration
+
+Edit `config.yaml` for:
+
+- **`database_path`**: SQLite storage location
+- **`default_model`**: Default LLM model
+- **`supported_models`**: List of available models
+- **API keys** for providers (OpenRouter, DeepSeek, Groq, Gemini)
+
+Environment variables can override config:
+- `MODEL_NAME`
+- `OPENAI_API_KEY`
+- `DEEPSEEK_API_KEY`
+- `GEMINI_API_KEY`
+- `GROQ_API_KEY`
+
+## WebSocket Protocol
+
+The Python backend and Rust TUI communicate via JSON messages:
+
+```json
+{
+  "event": "event_name",
+  "payload": {
+    "content": "message text",
+    "metadata": {"key": "value"}
+  }
+}
+```
+
+### Known Events
+
+- **`sync_state`**: State synchronization
+- **`chat_history`**: Historical messages
+- **`system_update`**: System notifications
+- **`chat_chunk`**: Streaming LLM response
+- **`chat_end`**: Stream completion
+- **`error`**: Error messages
+
+See `tui/src/models.rs` for complete message schemas.
+
+## Common Development Tasks
+
+### Adding a New Command
+
+1. Add handler in `engine/commands.py`
+2. Parse command string with `parts = cmd_str.split(" ", 2)`
+3. Send response via `await websocket.send_text(build_ws_payload(...))`
+
+Example:
+
+```python
+if cmd == "/mycmd" and len(parts) >= 2:
+    value = parts[1]
+    # Process command
+    await websocket.send_text(
+        build_ws_payload("system_update", f"Command executed: {value}")
+    )
+```
+
+### Adding a New WebSocket Event
+
+1. Define event in both Python and Rust
+2. **Python**: Send via `build_ws_payload()`
+3. **Rust**: Handle in `main.rs::run_app()` match statement
+
+### Modifying Database Schema
+
+1. Add migration logic in `database.py::init_db()`
+2. Use `try/except sqlite3.OperationalError` pattern for ALTER TABLE
+3. Update Pydantic models accordingly
+
+Example migration:
+
+```python
+try:
+    cursor.execute(
+        "ALTER TABLE worlds ADD COLUMN new_field TEXT NOT NULL DEFAULT ''"
+    )
+except sqlite3.OperationalError:
+    pass  # Column already exists
+```
+
+## Getting Help
+
+For development questions:
+
+1. Check the detailed guides:
+   - [Python Backend Development](/dev/python-backend)
+   - [Rust TUI Development](/dev/rust-tui)
+   - [Testing Guide](/dev/testing)
+
+2. Review the codebase:
+   - `docs/AGENTS.md` contains agent-specific guidance
+   - `README.md` for user documentation
+
+3. Open an issue on GitHub for bugs or feature requests
+
+## Next Steps
+
+- Learn about [Python backend development](/dev/python-backend)
+- Explore [Rust TUI development](/dev/rust-tui)
+- Understand the [testing workflow](/dev/testing)

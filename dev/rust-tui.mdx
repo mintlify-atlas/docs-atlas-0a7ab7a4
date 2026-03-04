@@ -1,0 +1,706 @@
+---
+title: "Rust TUI Development"
+description: "Ratatui terminal UI development guide - event handling, rendering, and WebSocket communication"
+---
+
+## Overview
+
+The Flower Engine TUI is built with Rust using the Ratatui library. It provides a fast, responsive terminal interface that communicates with the Python backend via WebSockets.
+
+## Technology Stack
+
+Dependencies from `tui/Cargo.toml`:
+
+```toml
+[dependencies]
+crossterm = { version = "0.27.0", features = ["event-stream"] }
+ratatui = "0.26.0"
+tokio = { version = "1.37.0", features = ["full"] }
+tokio-tungstenite = "0.21.0"
+futures-util = "0.3.30"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+url = "2.5.8"
+```
+
+### Key Libraries
+
+- **Ratatui**: TUI widget library for building terminal interfaces
+- **Crossterm**: Cross-platform terminal manipulation (input/output)
+- **Tokio**: Async runtime for concurrent operations
+- **tokio-tungstenite**: WebSocket client implementation
+- **Serde**: Serialization/deserialization framework
+- **futures-util**: Async utility functions and traits
+
+## Running the TUI
+
+### Development Build
+
+```bash
+cd tui
+cargo run
+```
+
+### Release Build (Optimized)
+
+```bash
+cd tui
+cargo run --release
+```
+
+Release builds are significantly faster and use less memory.
+
+### Build Only
+
+```bash
+cd tui
+cargo build
+cargo build --release
+```
+
+**Important**: The TUI requires the Python backend to be running on `ws://localhost:8000/ws/rpc`.
+
+## Project Structure
+
+```
+tui/src/
+├── main.rs        # Entry point + event loop
+├── app.rs         # App state + logic
+├── models.rs      # WebSocket message types
+├── ws.rs          # WebSocket client
+└── ui/            # UI rendering modules
+    ├── mod.rs     # Main render function
+    ├── chat.rs    # Chat area rendering
+    ├── input.rs   # Input box rendering
+    ├── header.rs  # Header bar rendering
+    ├── sidebar.rs # Sidebar rendering
+    ├── popup.rs   # Popup menu rendering
+    └── checklist.rs # Checklist rendering
+```
+
+## Code Style Guidelines
+
+### Naming Conventions
+
+- **Types**: `PascalCase`
+- **Functions/variables**: `snake_case`
+- **Constants**: `UPPER_SNAKE_CASE`
+- **Enums**: `PascalCase` for variants
+
+Example:
+
+```rust
+// Constants
+const TICK_RATE: Duration = Duration::from_millis(150);
+const MAX_RETRIES: u32 = 3;
+
+// Types
+struct App {
+    input: String,
+    messages: Vec<(String, String)>,
+}
+
+enum PopupMode {
+    None,
+    Commands,
+    World,
+    Character,
+}
+
+// Functions
+fn handle_key_event(app: &mut App, key: KeyCode) {
+    // Implementation
+}
+```
+
+### Error Handling
+
+- Use **`Result<T, Box<dyn Error>>`** for main functions
+- Use **`?` operator** for error propagation
+- Use **`unwrap()`** only in tests or when failure is impossible
+- Prefer **`if let` or `match`** for `Option` handling
+
+Example:
+
+```rust
+use std::error::Error;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    // Prefer ? operator
+    enable_raw_mode()?;
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::new(backend)?;
+    
+    // Safe unwrap (we know it will succeed)
+    let (tx, rx) = mpsc::unbounded_channel();
+    
+    // Pattern matching for Option
+    match app.get_selected_item() {
+        Some(item) => process_item(item),
+        None => log::warn!("No item selected"),
+    }
+    
+    Ok(())
+}
+```
+
+### Async Patterns
+
+- Use **`#[tokio::main]`** for async main function
+- Use **`tokio::select!`** for concurrent event processing
+- Use **channels** (`mpsc::unbounded_channel`) for message passing between tasks
+
+Example from `tui/src/main.rs:74`:
+
+```rust
+tokio::select! {
+    // Process WebSocket messages
+    Some(msg) = rx_in.recv() => {
+        match msg.event.as_str() {
+            "sync_state" => {
+                app.status = "Synced".to_string();
+                // Handle state sync
+            }
+            "chat_chunk" => {
+                app.append_chunk(&msg.payload.content);
+            }
+            _ => {}
+        }
+    }
+    
+    // Process terminal events
+    Some(Ok(event)) = reader.next().fuse() => {
+        match event {
+            Event::Key(key) => handle_key(key),
+            _ => {}
+        }
+    }
+    
+    // Animation tick
+    _ = tokio::time::sleep(timeout).fuse() => {
+        if app.is_typing {
+            app.spinner_frame = (app.spinner_frame + 1) % 10;
+        }
+        last_tick = std::time::Instant::now();
+    }
+}
+```
+
+## Key Components
+
+### Main Entry Point (`main.rs`)
+
+The main function sets up the terminal and event loop:
+
+```rust
+use crossterm::{
+    event::{Event, EventStream, KeyCode},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{backend::CrosstermBackend, Terminal};
+use tokio::sync::mpsc;
+
+const TICK_RATE: Duration = Duration::from_millis(150);
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+    
+    let mut app = App::new();
+    
+    // Create channels for WebSocket communication
+    let (tx_in, rx_in) = mpsc::unbounded_channel::<WsMessage>();
+    let (tx_out, rx_out) = mpsc::unbounded_channel::<String>();
+    
+    // Spawn WebSocket client
+    tokio::spawn(async move {
+        ws::start_ws_client(tx_in, rx_out).await;
+    });
+    
+    // Run main event loop
+    let res = run_app(&mut terminal, &mut app, rx_in, tx_out).await;
+    
+    // Cleanup
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    
+    if let Err(err) = res {
+        println!("{:?}", err)
+    }
+    
+    Ok(())
+}
+```
+
+### Application State (`app.rs`)
+
+Manages the application state and logic:
+
+```rust
+pub struct App {
+    pub input: String,
+    pub messages: Vec<(String, String)>,  // (role, content)
+    pub status: String,
+    pub is_typing: bool,
+    pub spinner_frame: usize,
+    pub should_quit: bool,
+    pub show_popup: bool,
+    pub popup_mode: PopupMode,
+    pub selected_index: usize,
+    pub scroll: usize,
+    
+    // State from backend
+    pub world_id: String,
+    pub character_id: String,
+    pub session_id: String,
+    pub active_model: String,
+    pub available_worlds: Vec<EntityInfo>,
+    pub available_characters: Vec<EntityInfo>,
+    pub available_models: Vec<EntityInfo>,
+}
+
+impl App {
+    pub fn new() -> Self {
+        Self {
+            input: String::new(),
+            messages: Vec::new(),
+            status: "Connecting...".to_string(),
+            is_typing: false,
+            spinner_frame: 0,
+            should_quit: false,
+            show_popup: false,
+            popup_mode: PopupMode::None,
+            selected_index: 0,
+            scroll: 0,
+            world_id: String::new(),
+            character_id: String::new(),
+            session_id: String::new(),
+            active_model: String::new(),
+            available_worlds: Vec::new(),
+            available_characters: Vec::new(),
+            available_models: Vec::new(),
+        }
+    }
+    
+    pub fn handle_char(&mut self, c: char) {
+        self.input.push(c);
+    }
+    
+    pub fn handle_backspace(&mut self) {
+        self.input.pop();
+    }
+    
+    pub fn submit_message(&mut self) -> Option<String> {
+        if self.input.is_empty() {
+            return None;
+        }
+        
+        let msg = self.input.clone();
+        self.input.clear();
+        self.messages.push(("user".to_string(), msg.clone()));
+        self.is_typing = true;
+        
+        Some(msg)
+    }
+    
+    pub fn append_chunk(&mut self, chunk: &str) {
+        if let Some((role, content)) = self.messages.last_mut() {
+            if role == "assistant" {
+                content.push_str(chunk);
+                return;
+            }
+        }
+        
+        self.messages.push(("assistant".to_string(), chunk.to_string()));
+    }
+    
+    pub fn finish_stream(&mut self) {
+        self.is_typing = false;
+    }
+}
+```
+
+### WebSocket Models (`models.rs`)
+
+Defines message structures:
+
+```rust
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct EntityInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub prompt_price: f64,
+    #[serde(default)]
+    pub completion_price: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WsMessage {
+    pub event: String,
+    pub payload: Payload,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Payload {
+    pub content: String,
+    #[serde(default)]
+    pub metadata: Metadata,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct Metadata {
+    pub model: Option<String>,
+    pub model_confirmed: Option<bool>,
+    pub tokens_per_second: Option<f64>,
+    pub world_id: Option<String>,
+    pub character_id: Option<String>,
+    pub total_tokens: Option<u32>,
+    pub available_worlds: Option<Vec<EntityInfo>>,
+    pub available_characters: Option<Vec<EntityInfo>>,
+    pub available_models: Option<Vec<EntityInfo>>,
+    pub session_id: Option<String>,
+    pub history: Option<Vec<HistoryMessage>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct HistoryMessage {
+    pub role: String,
+    pub content: String,
+}
+```
+
+### WebSocket Client (`ws.rs`)
+
+Handles WebSocket connection and message passing:
+
+```rust
+use tokio::sync::mpsc;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
+use futures_util::{SinkExt, StreamExt};
+use crate::models::WsMessage;
+
+pub async fn start_ws_client(
+    tx_in: mpsc::UnboundedSender<WsMessage>,
+    mut rx_out: mpsc::UnboundedReceiver<String>,
+) {
+    let url = "ws://localhost:8000/ws/rpc";
+    
+    match connect_async(url).await {
+        Ok((ws_stream, _)) => {
+            let (mut write, mut read) = ws_stream.split();
+            
+            // Spawn reader task
+            tokio::spawn(async move {
+                while let Some(Ok(msg)) = read.next().await {
+                    if let Message::Text(text) = msg {
+                        if let Ok(parsed) = serde_json::from_str::<WsMessage>(&text) {
+                            let _ = tx_in.send(parsed);
+                        }
+                    }
+                }
+            });
+            
+            // Spawn writer task
+            tokio::spawn(async move {
+                while let Some(text) = rx_out.recv().await {
+                    let msg = serde_json::json!({
+                        "prompt": text
+                    });
+                    let _ = write.send(Message::Text(msg.to_string())).await;
+                }
+            });
+        }
+        Err(e) => {
+            eprintln!("Failed to connect to WebSocket: {}", e);
+        }
+    }
+}
+```
+
+### UI Rendering (`ui/mod.rs`)
+
+Main render function:
+
+```rust
+use ratatui::{
+    backend::Backend,
+    layout::{Constraint, Direction, Layout},
+    Frame,
+};
+use crate::app::App;
+
+pub fn draw<B: Backend>(f: &mut Frame<B>, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),  // Header
+            Constraint::Min(0),     // Chat area
+            Constraint::Length(3),  // Input box
+        ])
+        .split(f.size());
+    
+    // Render header
+    crate::ui::header::render(f, chunks[0], app);
+    
+    // Render chat area
+    crate::ui::chat::render(f, chunks[1], app);
+    
+    // Render input box
+    crate::ui::input::render(f, chunks[2], app);
+    
+    // Render popup if shown
+    if app.show_popup {
+        crate::ui::popup::render(f, app);
+    }
+}
+```
+
+## Event Handling
+
+The main event loop uses `tokio::select!` to handle multiple event sources:
+
+### Key Events
+
+From `main.rs:152`:
+
+```rust
+Event::Key(key) => {
+    match key.code {
+        KeyCode::Esc => {
+            if app.is_typing {
+                // Cancel generation
+                let _ = tx_out.send("/cancel".to_string());
+                app.is_typing = false;
+            } else if app.show_popup {
+                // Close popup
+                app.show_popup = false;
+                app.popup_mode = PopupMode::None;
+                app.input.clear();
+            } else {
+                // Quit application
+                app.should_quit = true;
+            }
+        }
+        KeyCode::Tab => {
+            app.apply_hint();
+        }
+        KeyCode::Enter => {
+            if app.show_popup {
+                // Handle popup selection
+                let filtered = app.get_filtered_items();
+                if !filtered.is_empty() && app.selected_index < filtered.len() {
+                    let selection = &filtered[app.selected_index];
+                    let _ = tx_out.send(format!("{} {}", prefix, selection.id));
+                }
+                app.show_popup = false;
+            } else if let Some(msg) = app.submit_message() {
+                let _ = tx_out.send(msg);
+            }
+        }
+        KeyCode::Char(c) => {
+            app.handle_char(c);
+            
+            // Auto-trigger popups
+            if app.input == "/" {
+                app.show_popup = true;
+                app.popup_mode = PopupMode::Commands;
+            }
+        }
+        KeyCode::Backspace => {
+            app.handle_backspace();
+        }
+        KeyCode::Up => {
+            if app.show_popup {
+                app.selected_index = app.selected_index.saturating_sub(1);
+            } else {
+                app.scroll = app.scroll.saturating_sub(1);
+            }
+        }
+        KeyCode::Down => {
+            if app.show_popup {
+                let max = app.get_filtered_items().len().saturating_sub(1);
+                if app.selected_index < max {
+                    app.selected_index += 1;
+                }
+            } else {
+                app.scroll = app.scroll.saturating_add(1);
+            }
+        }
+        _ => {}
+    }
+}
+```
+
+### WebSocket Events
+
+From `main.rs:77`:
+
+```rust
+Some(msg) = rx_in.recv() => {
+    match msg.event.as_str() {
+        "sync_state" => {
+            app.status = "Synced".to_string();
+            if let Some(model) = msg.payload.metadata.model {
+                app.active_model = model;
+            }
+            if let Some(world_id) = msg.payload.metadata.world_id {
+                app.world_id = world_id;
+            }
+            if let Some(worlds) = msg.payload.metadata.available_worlds {
+                app.available_worlds = worlds;
+            }
+        }
+        "chat_chunk" => {
+            app.append_chunk(&msg.payload.content);
+            if let Some(tps) = msg.payload.metadata.tokens_per_second {
+                app.tps = tps;
+            }
+        }
+        "chat_end" => {
+            if let Some(total) = msg.payload.metadata.total_tokens {
+                app.total_tokens += total;
+            }
+            app.finish_stream();
+            app.status = "Idle".to_string();
+        }
+        "system_update" => {
+            app.add_system_message(msg.payload.content);
+        }
+        "error" => {
+            app.add_system_message(format!("✗ {}", msg.payload.content));
+            app.is_typing = false;
+        }
+        _ => {}
+    }
+}
+```
+
+## Development Tips
+
+### Fast Compilation
+
+For faster development iterations:
+
+```bash
+# Use debug build for faster compilation
+cargo run
+
+# Use cargo-watch for automatic recompilation
+cargo install cargo-watch
+cargo watch -x run
+```
+
+### Debugging
+
+Since the TUI takes over the terminal, use file-based logging:
+
+```rust
+use std::fs::OpenOptions;
+use std::io::Write;
+
+fn log_debug(msg: &str) {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("tui_debug.log")
+        .unwrap();
+    writeln!(file, "{}", msg).unwrap();
+}
+
+// Usage
+log_debug(&format!("Current state: {:?}", app));
+```
+
+Or redirect stderr to a file:
+
+```bash
+cargo run 2>debug.log
+```
+
+### Testing Without Backend
+
+Create a mock WebSocket server for testing:
+
+```rust
+// In ws.rs, add a test mode
+if std::env::var("TEST_MODE").is_ok() {
+    // Send mock messages
+    let _ = tx_in.send(WsMessage {
+        event: "sync_state".to_string(),
+        payload: Payload {
+            content: String::new(),
+            metadata: Metadata::default(),
+        },
+    });
+}
+```
+
+### Performance Profiling
+
+```bash
+# Build with release + debug symbols
+cargo build --release
+
+# Profile with perf (Linux)
+perf record --call-graph dwarf target/release/tui
+perf report
+```
+
+## Common Patterns
+
+### Sending Commands to Backend
+
+```rust
+// Via the tx_out channel
+let _ = tx_out.send("/model gpt-4".to_string());
+let _ = tx_out.send("/world select darkwood".to_string());
+let _ = tx_out.send("Tell me about this place".to_string());
+```
+
+### Handling Popup Menus
+
+```rust
+if app.input == "/" {
+    app.show_popup = true;
+    app.popup_mode = PopupMode::Commands;
+    app.selected_index = 0;
+}
+
+if app.show_popup && key.code == KeyCode::Enter {
+    let filtered = app.get_filtered_items();
+    if let Some(item) = filtered.get(app.selected_index) {
+        // Process selection
+        let _ = tx_out.send(item.id.clone());
+    }
+    app.show_popup = false;
+}
+```
+
+### Managing Scroll State
+
+```rust
+// Auto-scroll to bottom on new message
+if app.messages.len() > visible_lines {
+    app.scroll = app.messages.len() - visible_lines;
+}
+
+// Clamp scroll to valid range
+let max_scroll = app.messages.len().saturating_sub(visible_lines);
+app.scroll = app.scroll.min(max_scroll);
+```
+
+## Next Steps
+
+- Learn about [testing the TUI](/dev/testing)
+- Review the [Python backend](/dev/python-backend)
+- Read the [contributing overview](/dev/overview)

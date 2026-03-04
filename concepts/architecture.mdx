@@ -1,0 +1,316 @@
+---
+title: Architecture overview
+description: Understanding Flower Engine's split-brain architecture and component interactions
+icon: diagram-project
+---
+
+## Split-Brain Design
+
+Flower Engine uses a **split-architecture** approach that separates concerns between AI orchestration and user interface:
+
+```text
+    [ THE FACE ]             [ THE BRAIN ]
+    (Rust / Ratatui)         (Python / FastAPI)
+          |                         |
+    TUI Interface <--- WebSocket ---> LLM Orchestrator
+          |            (JSON V1)            |
+    Async Input                     RAG (ChromaDB)
+    Event Loop                      SQLite Persistence
+```
+
+<Info>
+  **Why split?** The architecture decouples fast UI rendering (Rust) from heavyweight AI operations (Python), ensuring the terminal interface stays responsive even during long LLM inference times.
+</Info>
+
+## Component Layers
+
+### The Brain (Python Backend)
+
+The backend is built on **FastAPI** and handles all AI orchestration, data persistence, and narrative logic.
+
+#### Core Responsibilities
+
+<AccordionGroup>
+  <Accordion title="LLM Orchestration" icon="brain">
+    - Multi-provider support (OpenRouter, DeepSeek, Groq, Gemini)
+    - Token streaming with real-time performance metrics
+    - Dynamic model switching and pricing calculation
+    - Provider-specific client routing
+  </Accordion>
+
+  <Accordion title="Data Persistence" icon="database">
+    - SQLite for sessions, characters, and worlds
+    - ChromaDB for vector storage (RAG)
+    - Session history with hot-swapping
+    - Character and world asset management
+  </Accordion>
+
+  <Accordion title="Context Management" icon="memory">
+    - RAG-based lore retrieval (top 2 chunks)
+    - Recent memory injection (top 3 chunks)
+    - Scene context on session start
+    - Chunked lore embedding (800 char chunks)
+  </Accordion>
+</AccordionGroup>
+
+#### Startup Sequence
+
+From `engine/main.py:26-149`, the backend performs initialization:
+
+```python
+@app.on_event("startup")
+async def startup():
+    # 1. Load YAML assets from disk
+    for data in load_yaml_assets("assets/worlds/*.yaml"):
+        w = World(...)
+        world_manager.add_world(w)
+        
+        # 2. Chunk and embed lore for RAG
+        if w.lore:
+            chunks = []
+            current_chunk = ""
+            chunk_size = 800
+            
+            for line in w.lore.split('\n'):
+                if len(current_chunk) + len(line) > chunk_size:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = line + '\n'
+                else:
+                    current_chunk += line + '\n'
+            
+            for i, chunk in enumerate(chunks):
+                rag_manager.add_lore(w.id, f"base_lore_{i}", chunk)
+
+    # 3. Fetch available models from providers
+    resp = await hc.get("https://openrouter.ai/api/v1/models")
+    for m in resp.json().get("data", []):
+        state.AVAILABLE_MODELS.append({...})
+```
+
+<Warning>
+  The backend requires at least one API key (OpenRouter, Groq, DeepSeek, or Gemini) to function. Models are fetched dynamically at startup.
+</Warning>
+
+### The Face (Rust Frontend)
+
+The TUI is built with **Ratatui** and **Tokio**, providing a blazingly fast, async terminal interface.
+
+#### Event Loop Architecture
+
+From `tui/src/main.rs:54-286`, the main loop uses `tokio::select!` for concurrent event handling:
+
+```rust
+loop {
+    terminal.draw(|f| ui::draw(f, app))?;
+
+    tokio::select! {
+        // Process incoming WebSocket messages
+        Some(msg) = rx_in.recv() => {
+            match msg.event.as_str() {
+                "sync_state" => { /* Update UI state */ }
+                "chat_chunk" => { app.append_chunk(&msg.payload.content); }
+                "chat_end" => { app.finish_stream(); }
+                "error" => { /* Display error */ }
+                _ => {}
+            }
+        }
+        
+        // Process terminal input (keystrokes)
+        Some(Ok(event)) = reader.next().fuse() => {
+            match event {
+                Event::Key(key) => { /* Handle input */ }
+                _ => {}
+            }
+        }
+        
+        // Animation tick (spinner, cursor)
+        _ = tokio::time::sleep(timeout).fuse() => {
+            if app.is_typing {
+                app.spinner_frame = (app.spinner_frame + 1) % 10;
+            }
+        }
+    }
+}
+```
+
+<Check>
+  **150ms tick rate** ensures smooth spinner animations and cursor blinking without consuming excessive CPU.
+</Check>
+
+#### Connection Management
+
+From `tui/src/ws.rs:8-69`, the WebSocket client implements auto-reconnect:
+
+```rust
+pub async fn start_ws_client(
+    tx: mpsc::UnboundedSender<WsMessage>,
+    mut rx_out: mpsc::UnboundedReceiver<String>,
+) {
+    let url = Url::parse("ws://localhost:8000/ws/rpc").unwrap();
+    
+    // Retry loop — Python backend may still be warming up
+    let ws_stream = loop {
+        match connect_async(url.clone()).await {
+            Ok((stream, _)) => break stream,
+            Err(_) => {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    };
+
+    let (mut write, mut read) = ws_stream.split();
+    // ... spawn read/write tasks
+}
+```
+
+## Data Flow
+
+### User Message Flow
+
+<Steps>
+  <Step title="Input Capture">
+    User types message in Rust TUI and presses Enter
+  </Step>
+  <Step title="WebSocket Send">
+    TUI sends JSON payload: `{"prompt": "user message"}`
+  </Step>
+  <Step title="Command Routing">
+    Python backend checks if message starts with `/` for command handling
+  </Step>
+  <Step title="Database Save">
+    User message saved to SQLite **before** LLM call
+  </Step>
+  <Step title="Context Building">
+    - RAG queries lore (top 2 chunks)
+    - RAG queries memory (top 3 chunks)
+    - Scene added if first message
+  </Step>
+  <Step title="LLM Streaming">
+    - System prompt + history + context sent to LLM
+    - Tokens streamed back as `chat_chunk` events
+  </Step>
+  <Step title="Live Rendering">
+    TUI appends each chunk to display with typewriter effect
+  </Step>
+  <Step title="Finalization">
+    - `chat_end` event signals completion
+    - Assistant message saved to SQLite
+    - Memory chunk added to RAG
+  </Step>
+</Steps>
+
+### Cancellation Flow
+
+From `engine/main.py:233-250`, streaming can be interrupted:
+
+```python
+while not task.done():
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), timeout=0.05)
+        cmd_msg = json.loads(raw)
+        if cmd_msg.get("prompt") == "/cancel":
+            task.cancel()
+            await websocket.send_text(
+                build_ws_payload("system_update", "✗ Stream cancelled by user.")
+            )
+    except asyncio.TimeoutError:
+        continue
+```
+
+<Tip>
+  Press `Esc` during LLM response to cancel streaming. The TUI sends `/cancel` command, triggering `asyncio.CancelledError`.
+</Tip>
+
+## System Requirements
+
+<CardGroup cols={2}>
+  <Card title="Memory" icon="memory">
+    **4GB+ RAM** required
+    
+    Embeddings run on CPU using `all-MiniLM-L6-v2` for maximum compatibility
+  </Card>
+  <Card title="Storage" icon="hard-drive">
+    **~1GB disk space**
+    
+    Setup optimized to avoid heavy CUDA libraries
+  </Card>
+  <Card title="Runtime" icon="code">
+    **Python 3.12+**
+    
+    **Rust (stable)**
+    
+    Latest versions recommended
+  </Card>
+  <Card title="Platform" icon="desktop">
+    **Linux, macOS**
+    
+    **Windows via WSL2**
+    
+    Native terminal support required
+  </Card>
+</CardGroup>
+
+## Performance Characteristics
+
+### Latency Breakdown
+
+| Operation | Typical Time | Notes |
+|-----------|-------------|-------|
+| WebSocket round-trip | Less than 5ms | Localhost connection |
+| RAG query (lore) | 50-150ms | CPU embedding, 2 results |
+| RAG query (memory) | 30-100ms | CPU embedding, 3 results |
+| LLM first token | 200ms-2s | Provider-dependent |
+| Token streaming | 20-100 tokens/sec | Model-dependent |
+| UI render frame | Less than 1ms | Ratatui efficiency |
+
+<Info>
+  The Rust TUI maintains **60+ FPS** during active streaming, ensuring smooth scrolling and animations.
+</Info>
+
+## Asset Structure
+
+The engine loads configuration from YAML files at startup:
+
+```text
+assets/
+├── worlds/
+│   └── *.yaml       # Setting, lore, start_message, system_prompt
+├── characters/
+│   └── *.yaml       # Player personas and backgrounds
+└── rules/
+    └── *.yaml       # Global narrative constraints
+```
+
+### World YAML Schema
+
+```yaml
+id: "cyberpunk_city"
+name: "Neo-Tokyo 2077"
+start_message: "Neon lights flicker as rain falls on chrome streets."
+lore: |
+  A sprawling megacity ruled by megacorporations...
+  (Multi-paragraph world lore, chunked into 800-char segments)
+system_prompt: "You are the Game Master for a cyberpunk noir scenario."
+scene: "You stand in a rain-soaked alley, sirens wailing in the distance."
+```
+
+<Note>
+  **Lore chunking**: Long lore text is automatically split into 800-character chunks with smart line-break handling, then embedded separately for RAG retrieval.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Split-Brain Deep Dive" icon="brain" href="/concepts/split-brain">
+    Learn why Python and Rust work better apart
+  </Card>
+  <Card title="WebSocket Protocol" icon="plug" href="/concepts/websocket-protocol">
+    Master the JSON message format
+  </Card>
+  <Card title="System Rules" icon="gavel" href="/concepts/system-rules">
+    Understand hardcore narrative constraints
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/getting-started/installation">
+    Set up your own instance
+  </Card>
+</CardGroup>

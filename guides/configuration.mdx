@@ -1,0 +1,184 @@
+---
+title: Configuration
+description: Set up config.yaml with API keys and engine settings
+icon: gear
+---
+
+## Overview
+
+Flower Engine uses a `config.yaml` file for configuration. This file stores your API keys, database paths, and model settings. The config file is gitignored to protect your credentials.
+
+<Warning>
+Never commit `config.yaml` to version control. Always use `config.yaml.example` as a template.
+</Warning>
+
+## Initial Setup
+
+<Steps>
+  <Step title="Copy the example config">
+    ```bash
+    cp config.yaml.example config.yaml
+    ```
+  </Step>
+
+  <Step title="Edit config.yaml with your API keys">
+    Open `config.yaml` in your text editor and replace placeholder values with real credentials.
+  </Step>
+
+  <Step title="Verify the configuration">
+    Start the engine to ensure your config loads correctly:
+    ```bash
+    python -m engine.main
+    ```
+  </Step>
+</Steps>
+
+## Configuration File Structure
+
+### Database Settings
+
+```yaml
+# Database Storage Path (Relative to execution directory)
+database_path: "./chroma_db"
+```
+
+<Info>
+The `database_path` specifies where the ChromaDB vector database stores world lore and memory embeddings. This is separate from the SQLite database (`engine.db`).
+</Info>
+
+### LLM Provider API Keys
+
+#### OpenRouter (Recommended)
+
+OpenRouter provides access to multiple models through a single API:
+
+```yaml
+openai_base_url: "https://openrouter.ai/api/v1"
+openai_api_key: "sk-or-v1-YOUR_OPENROUTER_KEY_HERE"
+```
+
+<Card title="Get an OpenRouter API Key" icon="key" href="https://openrouter.ai">
+  Sign up at OpenRouter to access GPT-4, Claude, Gemini, and more through one API.
+</Card>
+
+#### DeepSeek
+
+For DeepSeek Chat and DeepSeek Reasoner models:
+
+```yaml
+deepseek_api_key: "sk-YOUR_DEEPSEEK_KEY_HERE"
+```
+
+#### Google Gemini
+
+For direct Gemini API access:
+
+```yaml
+gemini_api_key: "AIzaSyYOUR_GEMINI_KEY_HERE"
+```
+
+<Tip>
+You can obtain a free Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey).
+</Tip>
+
+### Model Configuration
+
+```yaml
+# Default model used when starting a new session
+default_model: "google/gemini-2.0-pro-exp-02-05:free"
+
+# Models available in the TUI model selector
+supported_models:
+  - "google/gemini-2.0-pro-exp-02-05:free"
+  - "openai/gpt-4o-mini"
+  - "anthropic/claude-3-haiku"
+  - "deepseek-chat"
+  - "deepseek-reasoner"
+```
+
+<Note>
+The `supported_models` list is sent to the TUI on connection. The engine also fetches additional models from OpenRouter and Groq APIs at startup.
+</Note>
+
+## Complete Example
+
+```yaml config.yaml
+# Engine Configuration
+# Copy this file to config.yaml and fill in your real keys.
+# config.yaml is gitignored and should NEVER be committed.
+
+# Database Storage Path (Relative to execution directory)
+database_path: "./chroma_db"
+
+# LLM Providers - replace with your actual API keys
+openai_base_url: "https://openrouter.ai/api/v1"
+openai_api_key: "sk-or-v1-REPLACE_WITH_YOUR_OPENROUTER_KEY"
+
+deepseek_api_key: "sk-REPLACE_WITH_YOUR_DEEPSEEK_KEY"
+
+gemini_api_key: "AIzaSy..."
+
+# Supported Models List (The TUI will receive these on Handshake)
+default_model: "google/gemini-2.0-pro-exp-02-05:free"
+supported_models:
+  - "google/gemini-2.0-pro-exp-02-05:free"
+  - "openai/gpt-4o-mini"
+  - "anthropic/claude-3-haiku"
+  - "deepseek-chat"
+  - "deepseek-reasoner"
+```
+
+## Configuration Loading
+
+The engine loads configuration in this order:
+
+1. Read `config.yaml` using YAML parser
+2. Fall back to environment variables if keys are missing
+3. Use default values if neither config nor env vars exist
+
+From `engine/config.py:22`:
+
+```python
+OPENAI_API_KEY = CONFIG.get("openai_api_key", os.getenv("OPENAI_API_KEY", "dummy_key_if_local"))
+```
+
+<Tip>
+You can use environment variables instead of config.yaml if preferred. Set `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, etc.
+</Tip>
+
+## Troubleshooting
+
+### Config file not found
+
+If you see "Failed to load config.yaml", ensure:
+
+- The file exists in the project root (same directory as `engine/`)
+- The file is named exactly `config.yaml` (not `config.yml`)
+- The file has valid YAML syntax
+
+### API key errors
+
+If you get authentication errors:
+
+- Verify your API keys are correct and active
+- Check for extra spaces or quotes around keys
+- Ensure keys start with the correct prefix (`sk-or-v1-` for OpenRouter, `sk-` for DeepSeek)
+
+### Model not available
+
+If a model fails to load:
+
+- Verify the model ID matches the provider's format
+- Check that you have the correct API key for that provider
+- Review engine startup logs for model fetch errors
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Worlds" icon="globe" href="/guides/creating-worlds">
+    Define worlds with lore, scenes, and starting messages
+  </Card>
+  <Card title="Creating Characters" icon="user" href="/guides/creating-characters">
+    Create characters with unique personas
+  </Card>
+</CardGroup>

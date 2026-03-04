@@ -1,0 +1,285 @@
+---
+title: Character YAML Schema
+description: Complete reference for character asset YAML files
+---
+
+## Overview
+
+Character assets define the personalities and personas that users can interact with in your worlds. Each character YAML file represents a distinct AI personality with specific traits, background, and behavior patterns.
+
+## File Location
+
+Character files should be placed in: `assets/characters/*.yaml`
+
+## Schema Definition
+
+### Required Fields
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the character. Used internally to reference this character. Must be unique across all characters.
+  
+  **Example:** `"example_char"`, `"mercenary_jack"`, `"wizard_merlin"`
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Display name of the character shown to users. This is how the character identifies themselves and appears in the UI.
+  
+  **Example:** `"Mercenary"`, `"Jack Chen"`, `"Merlin the Wise"`
+  
+  **Best Practices:**
+  - Use proper capitalization
+  - Can be a full name, title, or single name
+  - Keep it under 30 characters for UI display
+</ParamField>
+
+<ParamField path="persona" type="string" required>
+  The character's personality, background, and behavioral traits. This text directly shapes how the AI roleplays this character.
+  
+  **Example:** `"A battle-hardened veteran looking for their next paycheck."`
+  
+  **Best Practices:**
+  - Be specific about personality traits, motivations, and background
+  - Include speech patterns or distinctive behaviors
+  - 1-5 sentences is typical
+  - Write in third person ("A veteran who...", "They are...")
+  - Include emotional tendencies and relationship to others
+</ParamField>
+
+## Complete Examples
+
+### Simple Character
+
+```yaml
+id: "mercenary"
+name: "Mercenary"
+persona: "A battle-hardened veteran looking for their next paycheck."
+```
+
+### Detailed Character
+
+```yaml
+id: "jack_chen"
+name: "Jack Chen"
+persona: "A former corporate security officer turned street mercenary. Cynical and world-weary, but maintains a dark sense of humor. Speaks in short, clipped sentences. Has extensive combat experience and deep knowledge of corporate tactics. Distrusts authority but honors contracts. Always calculating the odds and potential payoff of any situation."
+```
+
+### Fantasy Character
+
+```yaml
+id: "wizard_merlin"
+name: "Merlin the Grey"
+persona: "An ancient wizard with centuries of knowledge and a fondness for riddles. Speaks in an archaic, formal manner with occasional cryptic pronouncements. Patient with those who seek knowledge genuinely, but dismissive of fools. Has witnessed the rise and fall of kingdoms and maintains a long view of history. Often references obscure historical events and magical theory."
+```
+
+### Social Character
+
+```yaml
+id: "bartender_miko"
+name: "Miko"
+persona: "A friendly bartender who knows everyone's secrets but never tells. Warm and welcoming with a talent for reading people's moods. Speaks casually with local slang. Has worked at the same bar for fifteen years and knows all the neighborhood regulars. Offers advice freely but never judgmentally. Expert at mixing drinks and mixing in just enough gossip to keep conversations interesting."
+```
+
+## Implementation Details
+
+Characters are loaded at startup and stored in the database. The schema maps to the `Character` Pydantic model:
+
+```python
+class Character(BaseModel):
+    id: str
+    name: str
+    persona: str
+```
+
+**Database Storage:** `engine/database.py:80` - Characters table
+
+**Loading Process:** `engine/utils.py:16` - `load_yaml_assets()` function
+
+**Persona Usage:** `engine/llm.py:59-61` - Character name and persona are used to build the system prompt
+
+## Persona Writing Guide
+
+### Structure Your Persona
+
+A well-structured persona typically includes:
+
+1. **Core Identity** - Who they are in one sentence
+2. **Personality Traits** - 2-4 distinctive characteristics
+3. **Background** - Relevant history or experience
+4. **Speech/Behavior Patterns** - How they communicate or act
+5. **Motivations** - What drives them
+
+**Example:**
+```yaml
+persona: |
+  A street-smart information broker in her thirties. [Core Identity]
+  
+  Quick-witted and cautious, always analyzing angles and potential threats. [Personality]
+  
+  Grew up in the undercity networks and learned early that information is the most valuable currency. [Background]
+  
+  Speaks in rapid-fire sentences peppered with local slang and technical jargon. [Speech Pattern]
+  
+  Driven by curiosity and the thrill of knowing secrets others don't, but pragmatic enough to know when silence is more valuable than sharing. [Motivations]
+```
+
+### Personality Traits
+
+Effective traits to include:
+
+- **Emotional Tendencies:** Optimistic, cynical, melancholic, excitable
+- **Social Behavior:** Friendly, reserved, manipulative, honest
+- **Intelligence Style:** Analytical, intuitive, creative, practical
+- **Moral Alignment:** Lawful, neutral, chaotic; good, neutral, evil
+- **Confidence Level:** Arrogant, confident, uncertain, self-deprecating
+
+### Speech Patterns
+
+Characterize how they talk:
+
+- **Formality:** "Good evening, sir" vs "Yo, what's up"
+- **Vocabulary:** Technical jargon, street slang, archaic language
+- **Sentence Structure:** Long and flowing vs short and clipped
+- **Verbal Tics:** Repetitive phrases, rhetorical questions, interrupting themselves
+- **Accent/Dialect:** Regional expressions or syntax
+
+**Examples:**
+- "Speaks in formal, measured tones with perfect grammar"
+- "Uses lots of tech jargon and abbreviations"
+- "Prone to rambling stories that circle back to the point"
+- "Communicates in brief, tactical assessments"
+
+### Background Elements
+
+Include relevant history:
+
+- **Profession:** Current and former occupations
+- **Life Experience:** Key events that shaped them
+- **Skills/Expertise:** What they're good at
+- **Relationships:** General attitude toward others
+- **Status:** Social or economic position
+
+### Motivations
+
+What drives the character:
+
+- **Primary Goal:** Money, knowledge, power, justice, survival
+- **Values:** What they care about or protect
+- **Fears:** What they avoid or react to
+- **Desires:** What they seek or hope for
+
+## Advanced Techniques
+
+### Multi-Line Personas
+
+For longer personas, use YAML's multi-line string syntax:
+
+```yaml
+persona: |
+  First paragraph with core identity and personality.
+  
+  Second paragraph with background and experience.
+  
+  Third paragraph with speech patterns and behavior.
+```
+
+Or use the folded block scalar for a single paragraph:
+
+```yaml
+persona: >
+  This will be folded into a single
+  paragraph with line breaks converted
+  to spaces, which is useful for
+  longer descriptions.
+```
+
+### Contradictions and Depth
+
+Real characters have contradictions:
+
+```yaml
+persona: "A ruthless corporate enforcer who follows orders without question, yet secretly feeds stray cats and keeps a collection of children's books from before the war. Presents a cold, professional demeanor but occasionally reveals glimpses of the idealist they once were."
+```
+
+### Context-Specific Behavior
+
+Include how they react to situations:
+
+```yaml
+persona: "A paranoid hacker who trusts no one. Speaks in hushed tones and constantly checks their surroundings. Relaxes slightly around proven allies but never fully lets their guard down. Becomes agitated when discussing corporations or government surveillance."
+```
+
+## Best Practices
+
+### IDs
+- Use lowercase with underscores: `mercenary_jack`, `wizard_merlin`
+- Keep them short but descriptive
+- Never change an ID after creation (it's used as the primary key)
+
+### Names
+- Match the character's culture and setting
+- Consider titles or epithets: "Doctor Sarah Chen", "Blade the Assassin"
+- Keep under 30 characters for UI display
+
+### Personas
+- **Be Specific:** "Cynical" is better than "negative"; "speaks in military jargon" is better than "talks professionally"
+- **Show, Don't Tell:** "Always checks exits when entering a room" is more vivid than "cautious"
+- **Balance Length:** 50-200 words is ideal; too short lacks depth, too long may not be fully utilized
+- **Test and Iterate:** Chat with your character to see if the persona comes through
+- **Consider Context:** A character's persona works with world lore and active rules
+
+### Writing Style
+- Use third person: "A veteran who..." not "I am a veteran..."
+- Present tense works well: "speaks in" not "spoke in"
+- Be descriptive but concise
+- Focus on traits that affect interaction, not just background details
+
+## Common Pitfalls
+
+<Warning>
+  **Avoid These Mistakes:**
+  
+  - **Too Generic:** "A friendly person" tells the AI almost nothing
+  - **Conflicting Traits:** "Always honest but also a master manipulator" without explanation
+  - **Pure Background:** Don't focus solely on history; include personality and behavior
+  - **Overly Complex:** 500+ word personas may not be fully processed
+  - **Missing Speech Patterns:** Without guidance, characters may all sound similar
+</Warning>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Character not appearing in selection menu">
+    - Verify the YAML file is in `assets/characters/` directory
+    - Check that the `id` field is present and unique
+    - Ensure the YAML syntax is valid (use a YAML validator)
+    - Restart the engine to reload assets
+  </Accordion>
+  
+  <Accordion title="Character personality not coming through">
+    - Make the persona more specific with concrete traits
+    - Add speech patterns or verbal tics
+    - Include how they react to situations
+    - Test with different prompts to see consistency
+    - Remember that world settings and rules also affect responses
+  </Accordion>
+  
+  <Accordion title="Character sounds too similar to others">
+    - Add distinctive speech patterns
+    - Include unique vocabulary or expressions
+    - Specify contrasting personality traits
+    - Add specific background elements that inform their worldview
+  </Accordion>
+  
+  <Accordion title="Persona seems ignored">
+    - Check that all three required fields are present
+    - Personas compete with other instructions (world, rules)
+    - Try making the most important traits more prominent (put them first)
+    - Verify the character is properly loaded (check logs)
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+- [World Schema](/assets/world-schema) - Create worlds for characters to inhabit
+- [Rules Schema](/assets/rules-schema) - Add universal rules that affect character behavior
+- [Quickstart Guide](/quickstart) - Set up your first character

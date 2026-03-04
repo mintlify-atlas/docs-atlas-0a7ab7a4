@@ -1,0 +1,499 @@
+---
+title: Model providers
+description: OpenRouter, Groq, DeepSeek, and Gemini integration with streaming support
+---
+
+## Overview
+
+Flower Engine supports four LLM providers with unified streaming interfaces:
+
+1. **OpenRouter** - 200+ models via single API
+2. **Groq** - Ultra-fast inference (400+ tokens/sec)
+3. **DeepSeek** - Chinese reasoning models
+4. **Gemini** - Google's official AI SDK
+
+All providers stream token-by-token over WebSocket for real-time narrative generation.
+
+## Configuration
+
+### API Keys
+
+Edit `config.yaml` with your credentials:
+
+```yaml
+# OpenRouter (primary, supports 200+ models)
+openai_base_url: "https://openrouter.ai/api/v1"
+openai_api_key: "sk-or-v1-YOUR_KEY_HERE"
+
+# DeepSeek (Chinese models)
+deepseek_api_key: "sk-YOUR_DEEPSEEK_KEY"
+
+# Groq (fast inference)
+groq_api_key: "gsk_YOUR_GROQ_KEY"
+
+# Google Gemini (official SDK)
+gemini_api_key: "AIzaSyXXXXXXXXXXXXXX"
+```
+
+### Environment Variables
+
+Alternatively, use environment variables (`engine/config.py:12-26`):
+
+```bash
+export OPENAI_API_KEY="sk-or-v1-..."
+export DEEPSEEK_API_KEY="sk-..."
+export GROQ_API_KEY="gsk_..."
+export GEMINI_API_KEY="AIzaSy..."
+```
+
+## Client Initialization
+
+### OpenRouter Client
+
+Default provider using OpenAI SDK compatibility (`engine/llm.py:29-36`):
+
+```python
+from openai import AsyncOpenAI
+from engine.config import OPENAI_BASE_URL, OPENAI_API_KEY
+
+client = AsyncOpenAI(
+    base_url=OPENAI_BASE_URL,  # https://openrouter.ai/api/v1
+    api_key=OPENAI_API_KEY,
+    default_headers={
+        "HTTP-Referer": "https://github.com/ritz541/flower-engine",
+        "X-Title": "The Flower Roleplay Engine",
+    },
+)
+```
+
+**Supported Models**: Any model on OpenRouter's catalog
+- Anthropic Claude (claude-3-opus, claude-3-haiku)
+- OpenAI GPT (gpt-4o, gpt-4o-mini)
+- Meta Llama (llama-3.1-405b, llama-3.3-70b)
+- Google Gemini via OpenRouter (gemini-2.0-pro)
+- Mistral, Qwen, and 190+ others
+
+### DeepSeek Client
+
+Direct DeepSeek API integration (`engine/llm.py:38`):
+
+```python
+ds_client = AsyncOpenAI(
+    base_url="https://api.deepseek.com", 
+    api_key=DEEPSEEK_API_KEY
+)
+```
+
+**Supported Models**:
+- `deepseek-chat` - Conversational model ($0.14/M input, $0.28/M output)
+- `deepseek-reasoner` - Chain-of-thought reasoning ($0.55/M input, $2.19/M output)
+
+### Groq Client
+
+Ultra-fast inference platform (`engine/llm.py:40`):
+
+```python
+groq_client = AsyncOpenAI(
+    base_url="https://api.groq.com/openai/v1", 
+    api_key=GROQ_API_KEY
+)
+```
+
+**Supported Models** (fetched at startup from `/models` endpoint):
+- `llama-3.3-70b-versatile`
+- `llama-3.1-8b-instant`
+- `mixtral-8x7b-32768`
+- `gemma-2-9b-it`
+
+### Gemini Client
+
+Google's official SDK (non-OpenAI compatible) (`engine/llm.py:42-48`):
+
+```python
+gemini_client = None
+if GEMINI_API_KEY:
+    try:
+        from google import genai
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    except Exception as e:
+        log.error(f"Failed to initialize Gemini client: {e}")
+```
+
+**Supported Models**:
+- `gemini/gemini-3.1-pro-preview` - Latest pro model
+- `gemini/gemini-3-flash-preview` - Fast, efficient
+- `gemini/gemini-3.1-flash-lite-preview` - Lightweight
+
+<Note>
+  Gemini requires `google-genai>=0.1.0` (installed via `requirements.txt:10`)
+</Note>
+
+## Model Routing Logic
+
+Automatic client selection based on model name (`engine/llm.py:124-195`):
+
+```python
+model_to_use = state.CURRENT_MODEL
+
+# Gemini routing (official SDK)
+if state.CURRENT_MODEL.startswith("gemini/"):
+    if not gemini_client:
+        await ws.send_text(build_ws_payload(
+            "system_update", 
+            "✗ Gemini API Key missing! Add gemini_api_key to config.yaml."
+        ))
+        return
+    active_client = gemini_client
+    model_to_use = state.CURRENT_MODEL.replace("gemini/", "")
+
+# DeepSeek routing
+elif state.CURRENT_MODEL.startswith("deepseek-"):
+    active_client = ds_client
+
+# Groq routing (prefix or model name pattern)
+elif (state.CURRENT_MODEL.startswith("groq/") or 
+      any(x in state.CURRENT_MODEL.lower() 
+          for x in ["llama-", "mixtral-", "gemma-"])):
+    active_client = groq_client
+
+# OpenRouter fallback (default)
+else:
+    active_client = client
+```
+
+## Streaming Implementation
+
+### Standard Streaming (OpenAI-Compatible)
+
+Used by OpenRouter, DeepSeek, and Groq (`engine/llm.py:197-220`):
+
+```python
+response = await active_client.chat.completions.create(
+    model=model_to_use, 
+    messages=messages, 
+    stream=True
+)
+
+start_time = None
+async for chunk in response:
+    if not start_time:
+        start_time = time.time()
+    
+    delta = (
+        chunk.choices[0].delta.content
+        if chunk.choices and chunk.choices[0].delta
+        else None
+    )
+    
+    if delta:
+        full_content += delta
+        total_tokens += 1
+        elapsed = time.time() - start_time
+        tps = total_tokens / elapsed if elapsed > 0 else 0.0
+        
+        metadata = {
+            "model": state.CURRENT_MODEL,
+            "tokens_per_second": round(tps, 2),
+            "world_id": world_id,
+        }
+        await ws.send_text(build_ws_payload("chat_chunk", delta, metadata))
+```
+
+### Gemini Streaming (Native SDK)
+
+Special handling for Gemini's different API (`engine/llm.py:134-178`):
+
+```python
+# Convert messages to Gemini format
+gemini_msgs = []
+for m in messages:
+    role = "user" if m["role"] in ["user", "system"] else "model"
+    gemini_msgs.append({"role": role, "parts": [{"text": m["content"]}]})
+
+# Extract system instruction
+system_instruction = None
+if messages[0]["role"] == "system":
+    system_instruction = messages[0]["content"]
+    gemini_msgs = gemini_msgs[1:]  # Remove from history
+
+# Stream with native SDK
+for chunk in gemini_client.models.generate_content_stream(
+    model=model_to_use,
+    contents=gemini_msgs,
+    config={"system_instruction": system_instruction} if system_instruction else None
+):
+    if chunk.text:
+        full_content += chunk.text
+        total_tokens += 1
+        
+        elapsed = time.time() - start_time
+        tps = total_tokens / elapsed if elapsed > 0 else 0
+        
+        await ws.send_text(build_ws_payload("chat_chunk", chunk.text, {
+            "tps": round(tps, 2),
+            "model": state.CURRENT_MODEL
+        }))
+```
+
+## Model Discovery
+
+### Dynamic Model Fetching
+
+Engine fetches available models at startup (`engine/main.py:69-149`):
+
+**OpenRouter Models:**
+```python
+async with httpx.AsyncClient() as hc:
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"} if OPENAI_API_KEY else {}
+    resp = await hc.get("https://openrouter.ai/api/v1/models", headers=headers)
+    
+    if resp.status_code == 200:
+        for m in resp.json().get("data", []):
+            p = m.get("pricing", {})
+            state.AVAILABLE_MODELS.append({
+                "id": m["id"],
+                "name": f"[OpenRouter] {m.get('name', m['id'])}",
+                "prompt_price": round(float(p.get("prompt", 0)) * 1e6, 4),
+                "completion_price": round(float(p.get("completion", 0)) * 1e6, 4),
+            })
+```
+
+**Groq Models:**
+```python
+async with httpx.AsyncClient() as hc:
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}"} if GROQ_API_KEY else {}
+    resp = await hc.get(f"{GROQ_BASE_URL}/models", headers=headers)
+    
+    if resp.status_code == 200:
+        for m in resp.json().get("data", []):
+            state.AVAILABLE_MODELS.append({
+                "id": m["id"],
+                "name": f"[Groq] {m['id']}",
+                "prompt_price": 0.0,
+                "completion_price": 0.0,
+            })
+```
+
+**Gemini Models (Hardcoded):**
+```python
+gemini_list = [
+    {"id": "gemini/gemini-3.1-pro-preview", "name": "[Gemini] Gemini 3.1 Pro"},
+    {"id": "gemini/gemini-3-flash-preview", "name": "[Gemini] Gemini 3 Flash"},
+    {"id": "gemini/gemini-3.1-flash-lite-preview", "name": "[Gemini] Gemini 3.1 Flash-Lite"},
+]
+for m in gemini_list:
+    state.AVAILABLE_MODELS.append({
+        "id": m["id"],
+        "name": m["name"],
+        "prompt_price": 0.0,
+        "completion_price": 0.0,
+    })
+```
+
+## Switching Models
+
+Change active model via `/model` command:
+
+```bash
+/model                           # List available models
+/model anthropic/claude-3-opus   # Switch to Claude Opus
+/model deepseek-chat             # Switch to DeepSeek
+/model gemini/gemini-3-flash-preview  # Switch to Gemini
+```
+
+Model state persists in `persist.json` via `engine/state.py`.
+
+## Message Format
+
+### Standard Messages (OpenAI-Compatible)
+
+All providers except Gemini use this format:
+
+```python
+messages = [
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": "What lies beyond the mountains?"},
+    {"role": "assistant", "content": "The Crimson Peaks hide ancient secrets..."},
+    {"role": "user", "content": "I climb toward the summit."}
+]
+```
+
+### Gemini Messages
+
+Converted to Gemini's role structure:
+
+```python
+{
+    "role": "user",  # or "model" for assistant
+    "parts": [{"text": "message content"}]
+}
+```
+
+System prompts become `system_instruction` config parameter.
+
+## Performance Characteristics
+
+### Tokens Per Second (Typical)
+
+| Provider | Model | Speed | Latency |
+|----------|-------|-------|----------|
+| Groq | llama-3.1-8b | 400-600 TPS | Less than 100ms |
+| Groq | llama-3.3-70b | 200-300 TPS | Less than 200ms |
+| OpenRouter | gpt-4o-mini | 80-120 TPS | 200-500ms |
+| OpenRouter | claude-3-haiku | 60-100 TPS | 300-600ms |
+| DeepSeek | deepseek-chat | 40-80 TPS | 400-800ms |
+| Gemini | gemini-3-flash | 100-150 TPS | 200-400ms |
+| Gemini | gemini-3.1-pro | 60-100 TPS | 300-600ms |
+
+### Pricing (Per Million Tokens)
+
+| Provider | Model | Input | Output |
+|----------|-------|--------|--------|
+| Groq | llama-3.1-8b | Free | Free |
+| OpenRouter | gpt-4o-mini | $0.15 | $0.60 |
+| OpenRouter | claude-3-haiku | $0.25 | $1.25 |
+| DeepSeek | deepseek-chat | $0.14 | $0.28 |
+| DeepSeek | deepseek-reasoner | $0.55 | $2.19 |
+| Gemini | gemini-3-flash | $0.075 | $0.30 |
+
+## Error Handling
+
+### Missing API Keys
+
+```python
+if state.CURRENT_MODEL.startswith("gemini/"):
+    if not gemini_client:
+        await ws.send_text(build_ws_payload(
+            "system_update", 
+            "✗ Gemini API Key missing! Add gemini_api_key to config.yaml."
+        ))
+        return
+```
+
+### Stream Cancellation
+
+```python
+try:
+    async for chunk in response:
+        # Process chunk...
+except asyncio.CancelledError:
+    log.info(f"Stream cancelled after {total_tokens} tokens.")
+except Exception as e:
+    log.error(f"Error during streaming: {e}")
+    await ws.send_text(build_ws_payload("error", str(e)))
+finally:
+    await ws.send_text(
+        build_ws_payload("chat_end", "", {"total_tokens": total_tokens})
+    )
+```
+
+## Advanced Configuration
+
+### Custom Headers (OpenRouter)
+
+Add attribution headers for OpenRouter credits:
+
+```python
+client = AsyncOpenAI(
+    base_url=OPENAI_BASE_URL,
+    api_key=OPENAI_API_KEY,
+    default_headers={
+        "HTTP-Referer": "https://your-site.com",
+        "X-Title": "Your App Name",
+    },
+)
+```
+
+### Model Defaults
+
+Set fallback model in `config.yaml:17`:
+
+```yaml
+default_model: "google/gemini-2.0-pro-exp-02-05:free"
+```
+
+Or via environment:
+```bash
+export MODEL_NAME="anthropic/claude-3-opus"
+```
+
+### Supported Models List
+
+Define available models for TUI picker (`config.yaml:18-23`):
+
+```yaml
+supported_models:
+  - "google/gemini-2.0-pro-exp-02-05:free"
+  - "openai/gpt-4o-mini"
+  - "anthropic/claude-3-haiku"
+  - "deepseek-chat"
+  - "deepseek-reasoner"
+```
+
+## Adding New Providers
+
+### Step 1: Add Client
+
+Create client in `engine/llm.py`:
+
+```python
+from engine.config import CUSTOM_API_KEY
+
+custom_client = AsyncOpenAI(
+    base_url="https://api.custom-provider.com/v1",
+    api_key=CUSTOM_API_KEY
+)
+```
+
+### Step 2: Add Routing Logic
+
+Extend routing in `stream_chat_response()`:
+
+```python
+elif state.CURRENT_MODEL.startswith("custom/"):
+    active_client = custom_client
+    log.info(f"Using Custom client for {state.CURRENT_MODEL}")
+```
+
+### Step 3: Add Config
+
+Add to `engine/config.py`:
+
+```python
+CUSTOM_API_KEY = CONFIG.get("custom_api_key", os.getenv("CUSTOM_API_KEY", ""))
+```
+
+And `config.yaml`:
+```yaml
+custom_api_key: "your_key_here"
+```
+
+## Best Practices
+
+1. **Use Groq for Development**: Free and ultra-fast for testing
+2. **OpenRouter for Production**: Access to all models via single API
+3. **Monitor TPS**: Real-time tokens/sec in WebSocket metadata
+4. **Handle Cancellation**: Users can `/cancel` mid-stream
+5. **Log Model Switches**: Track model usage in production
+
+## Troubleshooting
+
+### "Model not found"
+- Verify model ID matches provider's catalog
+- Check API key has access to that model
+- Run `/model` to see available models
+
+### "Gemini key invalid"
+- Ensure key starts with `AIzaSy`
+- Enable Gemini API in Google Cloud Console
+- Install `google-genai` package
+
+### "Slow streaming"
+- Switch to Groq for 10x speed boost
+- Check network latency to provider
+- Reduce context size (fewer lore/memory chunks)
+
+### "Stream stops mid-response"
+- Check for `asyncio.CancelledError` in logs
+- Verify WebSocket connection stays open
+- Monitor `chat_end` event for completion

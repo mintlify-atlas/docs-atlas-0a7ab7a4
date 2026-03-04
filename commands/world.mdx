@@ -1,0 +1,239 @@
+---
+title: "/world Commands"
+description: "Select worlds and attach lore dynamically"
+---
+
+## Overview
+
+The `/world` command family allows you to select active worlds and attach lore dynamically during your storytelling sessions. Worlds define the setting, atmosphere, and context for your narratives.
+
+## Commands
+
+### /world select
+
+Activates a specific world for your current session.
+
+```bash
+/world select <world_id>
+```
+
+### /world attach_lore
+
+Adds lore text to the current active world's RAG (Retrieval-Augmented Generation) system.
+
+```bash
+/world attach_lore <lore_text>
+```
+
+---
+
+## /world select
+
+### Syntax
+
+```bash
+/world select <world_id>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `world_id` | string | Yes | The unique identifier of the world to activate |
+
+### Behavior
+
+1. Sets `state.ACTIVE_WORLD_ID` to the specified world ID
+2. Persists the change via `state.save_state()`
+3. Sends a system update confirmation
+4. Broadcasts the state change to all connected clients
+
+<Info>
+Selecting a world is a prerequisite for creating new sessions.
+</Info>
+
+### Examples
+
+#### Select a Fantasy World
+
+```bash
+/world select eldoria-realm
+```
+
+**Expected Output:**
+```
+Active world set to eldoria-realm
+```
+
+#### Select a Sci-Fi World
+
+```bash
+/world select nova-station-2247
+```
+
+**Expected Output:**
+```
+Active world set to nova-station-2247
+```
+
+### WebSocket Response
+
+```json
+{
+  "event": "system_update",
+  "payload": {
+    "content": "Active world set to eldoria-realm",
+    "metadata": {
+      "world_id": "eldoria-realm"
+    }
+  }
+}
+```
+
+After the system update, the engine calls `broadcast_sync_state()` to synchronize all clients.
+
+---
+
+## /world attach_lore
+
+### Syntax
+
+```bash
+/world attach_lore <lore_text>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `lore_text` | string | Yes | The lore text to attach (can contain spaces) |
+
+### Behavior
+
+1. Generates a unique UUID for the lore entry
+2. Adds the lore to the RAG system via `rag_manager.add_lore()`
+3. Associates the lore with `state.ACTIVE_WORLD_ID`
+4. Sends a confirmation message
+
+<Info>
+Attached lore becomes immediately available for RAG retrieval during AI generation, enriching responses with world-specific context.
+</Info>
+
+### Examples
+
+#### Attach Location Lore
+
+```bash
+/world attach_lore The Crystal Caves are ancient caverns filled with glowing blue crystals that hum with magical energy.
+```
+
+**Expected Output:**
+```
+Lore attached successfully.
+```
+
+#### Attach Historical Lore
+
+```bash
+/world attach_lore The Great Dragon War of 1247 devastated the northern kingdoms and led to the formation of the Mage Council.
+```
+
+**Expected Output:**
+```
+Lore attached successfully.
+```
+
+#### Attach Cultural Lore
+
+```bash
+/world attach_lore The Nomadic Tribes of Zephyr follow the Star Path, a ancient tradition of celestial navigation.
+```
+
+**Expected Output:**
+```
+Lore attached successfully.
+```
+
+### WebSocket Response
+
+```json
+{
+  "event": "system_update",
+  "payload": {
+    "content": "Lore attached successfully.",
+    "metadata": {}
+  }
+}
+```
+
+## Source Code Reference
+
+Implemented in `engine/commands.py:43-61`:
+
+```python
+elif cmd == "/world" and len(parts) >= 3:
+    sub = parts[1]
+    if sub == "attach_lore":
+        lore_text = parts[2]
+        rag_manager.add_lore(state.ACTIVE_WORLD_ID, str(uuid.uuid4()), lore_text)
+        await websocket.send_text(
+            build_ws_payload("system_update", "Lore attached successfully.")
+        )
+    elif sub == "select":
+        state.ACTIVE_WORLD_ID = parts[2].strip()
+        state.save_state()
+        await websocket.send_text(
+            build_ws_payload(
+                "system_update",
+                f"Active world set to {state.ACTIVE_WORLD_ID}",
+                {"world_id": state.ACTIVE_WORLD_ID},
+            )
+        )
+        await broadcast_sync_state(websocket)
+```
+
+## Use Cases
+
+### Starting a New Adventure
+
+```bash
+/world select forgotten-isles
+```
+
+Select your world before creating a session.
+
+### Dynamic World Building
+
+```bash
+/world attach_lore The Lighthouse of Eternal Flame has burned for three centuries, maintained by the Silent Keepers.
+```
+
+Add lore on-the-fly as your story develops.
+
+### Enriching Existing Worlds
+
+```bash
+/world attach_lore Local legend speaks of a hidden vault beneath the old library, sealed since the Scholar's Rebellion.
+```
+
+Expand your world's depth during gameplay.
+
+## Common Issues
+
+<Warning>
+**Missing subcommand**: The `/world` command requires either `select` or `attach_lore` as the second parameter.
+</Warning>
+
+<Warning>
+**No active world for lore**: While `attach_lore` uses `state.ACTIVE_WORLD_ID`, ensure you have a world selected first.
+</Warning>
+
+<Tip>
+Lore text can be as long as needed. The command uses `split(" ", 2)` which preserves everything after the subcommand as a single text parameter.
+</Tip>
+
+## Related
+
+- [Character Commands](/commands/character) - Select characters to interact with worlds
+- [Session Commands](/commands/session) - Create sessions that combine worlds and characters
+- [RAG System](/core-concepts/rag) - Learn how lore is used during generation

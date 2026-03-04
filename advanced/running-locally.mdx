@@ -1,0 +1,676 @@
+---
+title: Running locally
+description: Local development setup for Python backend and Rust TUI
+---
+
+## System Requirements
+
+### Python Backend
+- **Python**: 3.12+ (check with `python3 --version`)
+- **OS**: Linux, macOS, or WSL2 on Windows
+- **RAM**: 2GB minimum (4GB recommended for large models)
+- **Disk**: 500MB for dependencies + models
+
+### Rust TUI
+- **Rust**: 1.70+ via [rustup](https://rustup.rs/)
+- **Terminal**: Any ANSI-compatible terminal
+- **Resolution**: Minimum 80x24 characters
+
+## Initial Setup
+
+The repository includes an automated setup script that handles all dependencies.
+
+### Quick Start
+
+```bash
+# Clone the repository
+git clone https://github.com/ritz541/flower-engine.git
+cd flower-engine
+
+# Run setup (installs everything)
+chmod +x setup.sh
+./setup.sh
+```
+
+### What setup.sh Does
+
+The script performs these operations (`setup.sh:1-69`):
+
+**1. Prerequisite Checks**
+```bash
+# Verify Python 3.12+
+if ! command -v python3 &> /dev/null; then
+    echo "[ERROR] Python 3 is not installed."
+    exit 1
+fi
+
+# Verify Rust/Cargo
+if ! command -v cargo &> /dev/null; then
+    echo "[ERROR] Cargo is not installed. Visit https://rustup.rs/"
+    exit 1
+fi
+```
+
+**2. Virtual Environment Creation**
+```bash
+python3 -m venv venv
+```
+
+**3. CPU-Optimized Dependencies**
+```bash
+# Install CPU-only PyTorch first (avoids 8GB CUDA downloads)
+venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu --quiet
+
+# Then install requirements
+venv/bin/pip install -r requirements.txt --quiet
+```
+
+**4. Asset Initialization**
+```bash
+if [ ! -d "assets" ]; then
+    cp -r assets_example assets
+fi
+```
+
+**5. Configuration Template**
+```bash
+if [ ! -f "config.yaml" ]; then
+    cp config.yaml.example config.yaml
+    echo "[ACTION REQUIRED] Please edit config.yaml to add your API keys."
+fi
+```
+
+## Manual Setup (Alternative)
+
+If you prefer manual control:
+
+### Python Environment
+
+```bash
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install CPU-optimized PyTorch
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### Dependencies Breakdown
+
+**requirements.txt** (`requirements.txt:1-11`):
+```
+fastapi>=0.100.0        # WebSocket server framework
+uvicorn>=0.23.0         # ASGI server
+websockets>=11.0.3      # WebSocket protocol
+chromadb>=0.4.10        # Vector database
+openai>=1.3.0           # LLM client SDK
+pydantic>=2.3.0         # Data validation
+sentence-transformers>=2.2.2  # Embeddings (includes PyTorch)
+pyyaml>=6.0.1           # Config parsing
+watchdog>=3.0.0         # File watching
+google-genai>=0.1.0     # Gemini SDK
+```
+
+### Rust Environment
+
+```bash
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+# Build TUI (from project root)
+cd tui
+cargo build --release
+```
+
+**Cargo Dependencies** (`tui/Cargo.toml:6-14`):
+```toml
+[dependencies]
+crossterm = { version = "0.27.0", features = ["event-stream"] }
+ratatui = "0.26.0"
+tokio = { version = "1.37.0", features = ["full"] }
+tokio-tungstenite = "0.21.0"
+futures-util = "0.3.30"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+url = "2.5.8"
+```
+
+## Configuration
+
+### API Keys
+
+Edit `config.yaml` with your provider credentials:
+
+```yaml
+# Engine Configuration
+database_path: "./chroma_db"
+
+# LLM Providers
+openai_base_url: "https://openrouter.ai/api/v1"
+openai_api_key: "sk-or-v1-REPLACE_WITH_YOUR_OPENROUTER_KEY"
+
+deepseek_api_key: "sk-REPLACE_WITH_YOUR_DEEPSEEK_KEY"
+
+gemini_api_key: "AIzaSy..."
+
+# Model Configuration
+default_model: "google/gemini-2.0-pro-exp-02-05:free"
+supported_models:
+  - "google/gemini-2.0-pro-exp-02-05:free"
+  - "openai/gpt-4o-mini"
+  - "anthropic/claude-3-haiku"
+  - "deepseek-chat"
+  - "deepseek-reasoner"
+```
+
+<Note>
+  `config.yaml` is gitignored. Never commit API keys to version control.
+</Note>
+
+### Asset Files
+
+Copy example assets and customize:
+
+```bash
+cp -r assets_example assets
+```
+
+**Structure:**
+```
+assets/
+├── characters/
+│   ├── aria.yaml
+│   └── marcus.yaml
+├── worlds/
+│   ├── crimson_peaks.yaml
+│   └── silver_city.yaml
+└── rules/
+    ├── noir.yaml
+    └── fantasy.yaml
+```
+
+**Example Character** (`assets/characters/aria.yaml`):
+```yaml
+id: aria
+name: Aria
+persona: A mysterious wanderer with silver eyes and a haunted past.
+```
+
+**Example World** (`assets/worlds/crimson_peaks.yaml`):
+```yaml
+id: crimson_peaks
+name: The Crimson Peaks
+lore: |
+  Ancient mountains forged in dragon fire. The peaks glow crimson at dawn.
+  Few travelers return from the summit.
+scene: "You stand at the base of towering red mountains."
+system_prompt: "This is a dark fantasy setting with mythic undertones."
+```
+
+## Running the Engine
+
+### Full System (Recommended)
+
+The `start.sh` script launches both backend and TUI:
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+**What It Does** (`start.sh:34-84`):
+
+1. **Launches Backend**
+```bash
+venv/bin/python -m uvicorn engine.main:app \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --log-level error > /dev/null 2>&1 &
+BACKEND_PID=$!
+```
+
+2. **Waits for Readiness**
+```bash
+for i in {1..40}; do
+    if curl -s http://127.0.0.1:8000/ > /dev/null; then
+        READY=1
+        break
+    fi
+    sleep 0.4
+done
+```
+
+3. **Launches TUI**
+```bash
+cd tui
+cargo run --quiet
+```
+
+4. **Cleanup on Exit**
+```bash
+trap cleanup SIGINT SIGTERM
+
+cleanup() {
+    kill $(jobs -p) 2>/dev/null
+    exit
+}
+```
+
+### Backend Only (Development)
+
+Run backend with auto-reload for development:
+
+```bash
+source venv/bin/activate
+python -m uvicorn engine.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+**Output:**
+```
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [12345] using StatReload
+INFO:     Started server process [12346]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+```
+
+Backend is ready when you see `Application startup complete.`
+
+**Startup Sequence** (`engine/main.py:26-149`):
+1. Load worlds from `assets/worlds/*.yaml`
+2. Load characters from `assets/characters/*.yaml`
+3. Chunk world lore into RAG vectors (800 char chunks)
+4. Fetch available models from OpenRouter, Groq, Gemini
+5. Initialize WebSocket endpoint at `/ws/rpc`
+
+### TUI Only (Testing)
+
+Connect to running backend:
+
+```bash
+cd tui
+cargo run
+
+# Or with optimizations
+cargo run --release
+```
+
+**WebSocket Connection:**
+- Default: `ws://127.0.0.1:8000/ws/rpc`
+- Configurable in `tui/src/main.rs`
+
+### Test Client (Debugging)
+
+Use the included WebSocket test client:
+
+```bash
+source venv/bin/activate
+python engine/test_client.py
+```
+
+**What It Tests** (`engine/test_client.py`):
+1. Connects to `ws://localhost:8000/ws/rpc`
+2. Waits for handshake + sync_state messages
+3. Sends test prompt
+4. Verifies streaming response
+5. Disconnects gracefully
+
+## Development Workflow
+
+### Hot Reload (Python)
+
+Backend auto-reloads on file changes with `--reload` flag:
+
+```bash
+python -m uvicorn engine.main:app --reload
+```
+
+**Watches:**
+- `engine/*.py` - All engine modules
+- `assets/*.yaml` - Asset files (requires manual reload)
+
+### Rebuild (Rust)
+
+TUI requires manual rebuild after code changes:
+
+```bash
+cd tui
+cargo build  # Debug build (faster compile, slower runtime)
+cargo build --release  # Optimized (slower compile, faster runtime)
+```
+
+### Logging
+
+**Backend Logs** (`engine/logger.py`):
+```python
+from engine.logger import log
+
+log.info("Engine started")
+log.debug("Detailed debugging info")
+log.error("Something went wrong")
+```
+
+**View Logs:**
+```bash
+# Run backend without log suppression
+python -m uvicorn engine.main:app --log-level debug
+```
+
+**TUI Logs:**
+Rust uses `eprintln!()` for debugging (stderr):
+```bash
+cargo run 2> tui_errors.log
+```
+
+## Project Structure
+
+```
+theflower/
+├── engine/                 # Python backend
+│   ├── main.py            # FastAPI app + WebSocket handler
+│   ├── llm.py             # LLM streaming (OpenRouter, Groq, DeepSeek, Gemini)
+│   ├── rag.py             # ChromaDB vector storage
+│   ├── database.py        # SQLite + Pydantic models
+│   ├── commands.py        # Command handlers (/model, /world, etc.)
+│   ├── config.py          # Configuration loader
+│   ├── state.py           # Global state + persistence
+│   ├── prompt.py          # System prompt builder
+│   ├── handlers.py        # WebSocket broadcast helpers
+│   ├── utils.py           # YAML loader, message builder
+│   └── logger.py          # Logging setup
+├── tui/                    # Rust TUI
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs        # Entry point + event loop
+│       ├── app.rs         # App state + logic
+│       ├── models.rs      # WebSocket message types
+│       ├── ws.rs          # WebSocket client
+│       └── ui/            # UI rendering
+├── assets/                # Game assets (gitignored)
+│   ├── worlds/
+│   ├── characters/
+│   └── rules/
+├── config.yaml            # Configuration (gitignored)
+├── requirements.txt       # Python dependencies
+├── setup.sh               # Initial setup script
+├── start.sh               # Launch script
+├── engine.db              # SQLite database (auto-created)
+├── chroma_db/             # Vector storage (auto-created)
+└── persist.json           # State persistence (auto-created)
+```
+
+## Common Tasks
+
+### Adding a World
+
+1. Create `assets/worlds/my_world.yaml`:
+```yaml
+id: my_world
+name: My Custom World
+lore: |
+  Your world's backstory and lore here.
+  This will be chunked and vectorized automatically.
+scene: "The opening scene description."
+system_prompt: "Additional context for the LLM."
+start_message: "Welcome to my world!"
+```
+
+2. Restart backend (auto-loads on startup)
+
+### Adding a Character
+
+1. Create `assets/characters/my_char.yaml`:
+```yaml
+id: my_char
+name: Character Name
+persona: Detailed character description and personality.
+```
+
+2. Restart backend
+
+### Modifying Database Schema
+
+Edit `engine/database.py` and add migration logic:
+
+```python
+def init_db():
+    # ... existing tables ...
+    
+    # Add new column with migration
+    try:
+        cur.execute("ALTER TABLE worlds ADD COLUMN new_field TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+```
+
+### Adding a New Command
+
+1. Edit `engine/commands.py`:
+```python
+async def handle_command(cmd_str: str, websocket: WebSocket):
+    parts = cmd_str.split(" ", 2)
+    cmd = parts[0].lower()
+    
+    if cmd == "/mycmd":
+        await websocket.send_text(build_ws_payload(
+            "system_update", 
+            "My custom command output"
+        ))
+        return
+```
+
+2. Restart backend (or use `--reload`)
+
+## Performance Optimization
+
+### Backend
+
+**Reduce Context Size:**
+Edit `engine/main.py:197-201`:
+```python
+# Reduce lore chunks from 2 to 1
+lore_list, _ = rag_manager.query_lore(state.ACTIVE_WORLD_ID, prompt, n_results=1)
+
+# Reduce memory chunks from 3 to 2
+mem_list, _ = rag_manager.query_memory(mem_key, prompt, n_results=2)
+```
+
+**Disable Model Fetching:**
+Comment out in `engine/main.py:69-149` for faster startup.
+
+**Use CPU-Only PyTorch:**
+Already configured in `setup.sh:37`.
+
+### TUI
+
+**Release Build:**
+```bash
+cargo build --release
+cargo run --release
+```
+
+**Strip Binary:**
+```bash
+strip tui/target/release/tui  # Reduces size by ~30%
+```
+
+## Troubleshooting
+
+### "Backend failed to start"
+
+**Check port availability:**
+```bash
+lsof -i :8000  # See what's using port 8000
+kill <PID>     # Kill conflicting process
+```
+
+**Check Python version:**
+```bash
+python3 --version  # Must be 3.12+
+```
+
+**Check dependencies:**
+```bash
+source venv/bin/activate
+pip list  # Verify all packages installed
+```
+
+### "TUI won't connect"
+
+**Verify backend is running:**
+```bash
+curl http://127.0.0.1:8000/
+# Should return {"message":"Flower Engine"}
+```
+
+**Check WebSocket endpoint:**
+```bash
+wscat -c ws://127.0.0.1:8000/ws/rpc
+# Should receive handshake message
+```
+
+### "Module not found" errors
+
+**Activate virtual environment:**
+```bash
+source venv/bin/activate  # Linux/macOS
+venv\Scripts\activate     # Windows
+```
+
+**Reinstall dependencies:**
+```bash
+pip install -r requirements.txt --force-reinstall
+```
+
+### "Rust compilation failed"
+
+**Update Rust:**
+```bash
+rustup update
+```
+
+**Clean build cache:**
+```bash
+cd tui
+cargo clean
+cargo build
+```
+
+### "ChromaDB errors"
+
+**Reset vector database:**
+```bash
+rm -rf chroma_db/
+# Restart backend (will recreate)
+```
+
+**Check disk space:**
+```bash
+df -h  # Ensure sufficient space
+```
+
+## Testing
+
+### Manual Testing
+
+1. Start backend: `python -m uvicorn engine.main:app --reload`
+2. Run test client: `python engine/test_client.py`
+3. Verify streaming response
+
+### WebSocket Testing
+
+Use `wscat` for interactive testing:
+
+```bash
+npm install -g wscat
+wscat -c ws://localhost:8000/ws/rpc
+
+# Send commands
+> /model
+> /world crimson_peaks
+> /char aria
+> /session new
+> Tell me about this place
+```
+
+### Load Testing
+
+Test concurrent connections:
+
+```python
+import asyncio
+import websockets
+
+async def test_connection(i):
+    async with websockets.connect('ws://localhost:8000/ws/rpc') as ws:
+        msg = await ws.recv()
+        print(f"Client {i}: {msg}")
+
+async def main():
+    await asyncio.gather(*[test_connection(i) for i in range(10)])
+
+asyncio.run(main())
+```
+
+## Production Deployment
+
+### Backend (Systemd Service)
+
+Create `/etc/systemd/system/flower-engine.service`:
+
+```ini
+[Unit]
+Description=Flower Engine Backend
+After=network.target
+
+[Service]
+Type=simple
+User=flower
+WorkingDirectory=/opt/flower-engine
+Environment="PATH=/opt/flower-engine/venv/bin"
+ExecStart=/opt/flower-engine/venv/bin/uvicorn engine.main:app --host 0.0.0.0 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Enable:**
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable flower-engine
+sudo systemctl start flower-engine
+```
+
+### Reverse Proxy (Nginx)
+
+```nginx
+server {
+    listen 80;
+    server_name flower.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+}
+```
+
+## Next Steps
+
+- **Configure Models**: Add API keys to `config.yaml`
+- **Create Worlds**: Design custom worlds in `assets/worlds/`
+- **Build Characters**: Define personas in `assets/characters/`
+- **Explore Commands**: Run `/help` in TUI for full command list
+- **Monitor Performance**: Watch tokens/sec in WebSocket metadata
+
+For advanced usage, see:
+- [RAG System](/advanced/rag-system) - Vector storage internals
+- [Model Providers](/advanced/model-providers) - LLM integration details

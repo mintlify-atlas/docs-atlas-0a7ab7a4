@@ -1,0 +1,760 @@
+---
+title: "database.py"
+description: "SQLite database models and managers for worlds, characters, messages, and sessions"
+---
+
+## Overview
+
+Defines Pydantic models and manager classes for persisting engine data using SQLite. Handles CRUD operations for worlds, characters, messages, and sessions.
+
+## Database Configuration
+
+```python
+DB_NAME = "engine.db"
+```
+
+SQLite database file stored in the project root directory.
+
+## Pydantic Models
+
+### `World`
+
+```python
+class World(BaseModel):
+    id: str
+    name: str
+    lore: str
+    start_message: str = ""
+    scene: str = ""
+    system_prompt: str = ""
+```
+
+Represents a roleplay world/setting.
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the world (e.g., `"fantasy"`, `"cyberpunk"`)
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Display name of the world
+</ParamField>
+
+<ParamField path="lore" type="string" required>
+  Background lore text (chunked and embedded for RAG retrieval)
+</ParamField>
+
+<ParamField path="start_message" type="string">
+  Opening message shown when starting a new session in this world
+</ParamField>
+
+<ParamField path="scene" type="string">
+  Current scene description (injected only on first message)
+</ParamField>
+
+<ParamField path="system_prompt" type="string">
+  World-specific instructions for the AI (merged into system prompt)
+</ParamField>
+
+### `Character`
+
+```python
+class Character(BaseModel):
+    id: str
+    name: str
+    persona: str
+```
+
+Represents an AI character persona.
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the character (e.g., `"elara"`, `"zephyr"`)
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Display name of the character
+</ParamField>
+
+<ParamField path="persona" type="string" required>
+  Personality description and behavioral traits
+</ParamField>
+
+### `Message`
+
+```python
+class Message(BaseModel):
+    id: Optional[int] = None
+    role: str
+    content: str
+    character_id: str
+    session_id: str = ""
+```
+
+Represents a single chat message.
+
+<ParamField path="id" type="int">
+  Auto-incremented message ID (set by database)
+</ParamField>
+
+<ParamField path="role" type="string" required>
+  Message role: `"user"` or `"assistant"`
+</ParamField>
+
+<ParamField path="content" type="string" required>
+  Message text content
+</ParamField>
+
+<ParamField path="character_id" type="string" required>
+  ID of the character this message belongs to
+</ParamField>
+
+<ParamField path="session_id" type="string">
+  Session ID for grouping messages (empty string for legacy non-session messages)
+</ParamField>
+
+### `Session`
+
+```python
+class Session(BaseModel):
+    id: str
+    character_id: str
+    world_id: str
+    model: str
+    title: str = ""
+    created_at: str = ""
+    last_used_at: str = ""
+```
+
+Represents a conversation session.
+
+<ParamField path="id" type="string" required>
+  12-character unique session identifier
+</ParamField>
+
+<ParamField path="character_id" type="string" required>
+  ID of the character in this session
+</ParamField>
+
+<ParamField path="world_id" type="string" required>
+  ID of the world setting for this session
+</ParamField>
+
+<ParamField path="model" type="string" required>
+  AI model used in this session
+</ParamField>
+
+<ParamField path="title" type="string">
+  Session title (derived from first user message, max 60 chars)
+</ParamField>
+
+<ParamField path="created_at" type="string">
+  Timestamp when session was created (`"YYYY-MM-DD HH:MM"` format)
+</ParamField>
+
+<ParamField path="last_used_at" type="string">
+  Timestamp of last activity (`"YYYY-MM-DD HH:MM"` format)
+</ParamField>
+
+## Database Initialization
+
+### `init_db()`
+
+```python
+def init_db()
+```
+
+Creates database tables if they don't exist and runs migrations.
+
+Called automatically on module import:
+```python
+init_db()
+```
+
+#### Table Schema
+
+**worlds**
+```sql
+CREATE TABLE IF NOT EXISTS worlds (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    lore TEXT NOT NULL,
+    start_message TEXT NOT NULL DEFAULT '',
+    scene TEXT NOT NULL DEFAULT '',
+    system_prompt TEXT NOT NULL DEFAULT ''
+)
+```
+
+**characters**
+```sql
+CREATE TABLE IF NOT EXISTS characters (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    persona TEXT NOT NULL
+)
+```
+
+**messages**
+```sql
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    character_id TEXT NOT NULL,
+    session_id TEXT NOT NULL DEFAULT ''
+)
+```
+
+**sessions**
+```sql
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    character_id TEXT NOT NULL,
+    world_id TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    last_used_at TEXT NOT NULL
+)
+```
+
+#### Migrations
+
+The `init_db()` function handles schema migrations gracefully:
+
+```python
+try:
+    cursor.execute(
+        "ALTER TABLE worlds ADD COLUMN start_message TEXT NOT NULL DEFAULT ''"
+    )
+except sqlite3.OperationalError:
+    pass  # Column already exists
+```
+
+## Manager Classes
+
+### `WorldManager`
+
+```python
+class WorldManager:
+    def __init__(self, db_path: str = DB_NAME):
+        self.db_path = db_path
+```
+
+Manages world CRUD operations.
+
+#### `add_world(world: World)`
+
+```python
+def add_world(self, world: World)
+```
+
+Inserts or updates a world in the database.
+
+<ParamField path="world" type="World" required>
+  World object to add or update
+</ParamField>
+
+**Example**
+```python
+world = World(
+    id="fantasy",
+    name="Fantasy Realm",
+    lore="A magical world filled with wonder...",
+    start_message="You awaken in a misty forest...",
+    scene="The forest is dense with ancient trees.",
+    system_prompt="Maintain a high-fantasy tone."
+)
+world_manager.add_world(world)
+```
+
+**SQL Query**
+```sql
+INSERT OR REPLACE INTO worlds (id, name, lore, start_message, scene, system_prompt)
+VALUES (?, ?, ?, ?, ?, ?)
+```
+
+#### `get_world(world_id: str) -> Optional[World]`
+
+```python
+def get_world(self, world_id: str) -> Optional[World]
+```
+
+Retrieves a world by ID.
+
+<ParamField path="world_id" type="string" required>
+  Unique world identifier
+</ParamField>
+
+<ResponseField name="world" type="World | None">
+  World object if found, otherwise `None`
+</ResponseField>
+
+**Example**
+```python
+world = world_manager.get_world("fantasy")
+if world:
+    print(f"World: {world.name}")
+    print(f"Lore length: {len(world.lore)} chars")
+```
+
+#### `get_all_worlds() -> List[World]`
+
+```python
+def get_all_worlds(self) -> List[World]
+```
+
+Retrieves all worlds.
+
+<ResponseField name="worlds" type="List[World]">
+  List of all world objects
+</ResponseField>
+
+**Example**
+```python
+worlds = world_manager.get_all_worlds()
+for world in worlds:
+    print(f"- {world.name} ({world.id})")
+```
+
+### `CharacterManager`
+
+```python
+class CharacterManager:
+    def __init__(self, db_path: str = DB_NAME):
+        self.db_path = db_path
+```
+
+Manages character CRUD operations.
+
+#### `add_character(character: Character)`
+
+```python
+def add_character(self, character: Character)
+```
+
+Inserts or updates a character.
+
+<ParamField path="character" type="Character" required>
+  Character object to add or update
+</ParamField>
+
+**Example**
+```python
+character = Character(
+    id="elara",
+    name="Elara Moonshadow",
+    persona="A wise and compassionate elven mage who values knowledge and peace."
+)
+char_manager.add_character(character)
+```
+
+#### `get_character(character_id: str) -> Optional[Character]`
+
+```python
+def get_character(self, character_id: str) -> Optional[Character]
+```
+
+Retrieves a character by ID.
+
+<ParamField path="character_id" type="string" required>
+  Unique character identifier
+</ParamField>
+
+<ResponseField name="character" type="Character | None">
+  Character object if found, otherwise `None`
+</ResponseField>
+
+**Example**
+```python
+char = char_manager.get_character("elara")
+if char:
+    print(f"Character: {char.name}")
+    print(f"Persona: {char.persona}")
+```
+
+### `MessageManager`
+
+```python
+class MessageManager:
+    def __init__(self, db_path: str = DB_NAME):
+        self.db_path = db_path
+```
+
+Manages message storage and retrieval.
+
+#### `add_message(message: Message)`
+
+```python
+def add_message(self, message: Message)
+```
+
+Inserts a message into the database.
+
+<ParamField path="message" type="Message" required>
+  Message object to store
+</ParamField>
+
+**Example**
+```python
+msg = Message(
+    role="user",
+    content="Tell me about the ancient ruins.",
+    character_id="elara",
+    session_id="a1b2c3d4e5f6"
+)
+msg_manager.add_message(msg)
+```
+
+#### `get_messages(character_id: str, session_id: str = "", limit: int = 50) -> List[Message]`
+
+```python
+def get_messages(
+    self, character_id: str, session_id: str = "", limit: int = 50
+) -> List[Message]
+```
+
+Retrieves messages for a character or session.
+
+<ParamField path="character_id" type="string" required>
+  Character ID to filter messages
+</ParamField>
+
+<ParamField path="session_id" type="string">
+  Session ID (if empty, retrieves legacy non-session messages)
+</ParamField>
+
+<ParamField path="limit" type="int">
+  Maximum number of messages to retrieve (default: 50)
+</ParamField>
+
+<ResponseField name="messages" type="List[Message]">
+  List of messages in chronological order (oldest first)
+</ResponseField>
+
+**Example**
+```python
+# Get last 10 messages from session
+messages = msg_manager.get_messages(
+    character_id="elara",
+    session_id="a1b2c3d4e5f6",
+    limit=10
+)
+
+for msg in messages:
+    print(f"{msg.role}: {msg.content}")
+```
+
+**SQL Logic**
+
+If `session_id` is provided:
+```sql
+SELECT * FROM messages
+WHERE session_id = ?
+ORDER BY id DESC LIMIT ?
+```
+
+If empty (legacy mode):
+```sql
+SELECT * FROM messages
+WHERE character_id = ? AND session_id = ''
+ORDER BY id DESC LIMIT ?
+```
+
+Results are reversed to return chronological order.
+
+#### `delete_session_messages(session_id: str)`
+
+```python
+def delete_session_messages(self, session_id: str)
+```
+
+Deletes all messages in a session.
+
+<ParamField path="session_id" type="string" required>
+  Session ID whose messages should be deleted
+</ParamField>
+
+**Example**
+```python
+msg_manager.delete_session_messages("a1b2c3d4e5f6")
+```
+
+### `SessionManager`
+
+```python
+class SessionManager:
+    def __init__(self, db_path: str = DB_NAME):
+        self.db_path = db_path
+```
+
+Manages conversation sessions.
+
+#### `create_session(session_id: str, character_id: str, world_id: str, model: str) -> Session`
+
+```python
+def create_session(
+    self, session_id: str, character_id: str, world_id: str, model: str
+) -> Session
+```
+
+Creates a new session.
+
+<ParamField path="session_id" type="string" required>
+  Unique 12-character session identifier
+</ParamField>
+
+<ParamField path="character_id" type="string" required>
+  Character ID for this session
+</ParamField>
+
+<ParamField path="world_id" type="string" required>
+  World ID for this session
+</ParamField>
+
+<ParamField path="model" type="string" required>
+  AI model to use in this session
+</ParamField>
+
+<ResponseField name="session" type="Session">
+  Newly created session object
+</ResponseField>
+
+**Example**
+```python
+import uuid
+
+session_id = uuid.uuid4().hex[:12]
+session = session_manager.create_session(
+    session_id=session_id,
+    character_id="elara",
+    world_id="fantasy",
+    model="deepseek-chat"
+)
+print(f"Created session: {session.id}")
+```
+
+**Auto-Generated Fields**
+```python
+now = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+s = Session(
+    id=session_id,
+    character_id=character_id,
+    world_id=world_id,
+    model=model,
+    title="New session",
+    created_at=now,
+    last_used_at=now,
+)
+```
+
+#### `update_title(session_id: str, title: str)`
+
+```python
+def update_title(self, session_id: str, title: str)
+```
+
+Updates session title (truncated to 60 characters).
+
+<ParamField path="session_id" type="string" required>
+  Session ID to update
+</ParamField>
+
+<ParamField path="title" type="string" required>
+  New session title (auto-truncated with ellipsis if > 60 chars)
+</ParamField>
+
+**Example**
+```python
+session_manager.update_title(
+    "a1b2c3d4e5f6",
+    "Discussion about ancient ruins and forgotten magic"
+)
+```
+
+**Truncation Logic**
+```python
+short = title[:60] + ("…" if len(title) > 60 else "")
+```
+
+#### `touch(session_id: str)`
+
+```python
+def touch(self, session_id: str)
+```
+
+Updates the `last_used_at` timestamp for a session.
+
+<ParamField path="session_id" type="string" required>
+  Session ID to update
+</ParamField>
+
+**Example**
+```python
+session_manager.touch("a1b2c3d4e5f6")
+```
+
+#### `list_recent(limit: int = 10) -> List[Session]`
+
+```python
+def list_recent(self, limit: int = 10) -> List[Session]
+```
+
+Retrieves most recently used sessions.
+
+<ParamField path="limit" type="int">
+  Maximum number of sessions to retrieve (default: 10)
+</ParamField>
+
+<ResponseField name="sessions" type="List[Session]">
+  List of sessions ordered by most recent activity
+</ResponseField>
+
+**Example**
+```python
+recent = session_manager.list_recent(limit=5)
+for sess in recent:
+    print(f"{sess.title} - {sess.last_used_at}")
+```
+
+#### `get_session(session_id: str) -> Optional[Session]`
+
+```python
+def get_session(self, session_id: str) -> Optional[Session]
+```
+
+Retrieves a session by ID.
+
+<ParamField path="session_id" type="string" required>
+  Session ID to retrieve
+</ParamField>
+
+<ResponseField name="session" type="Session | None">
+  Session object if found, otherwise `None`
+</ResponseField>
+
+**Example**
+```python
+sess = session_manager.get_session("a1b2c3d4e5f6")
+if sess:
+    print(f"Session: {sess.title}")
+    print(f"World: {sess.world_id}")
+    print(f"Character: {sess.character_id}")
+```
+
+#### `delete_session(session_id: str)`
+
+```python
+def delete_session(self, session_id: str)
+```
+
+Deletes a session (metadata only, not messages or vectors).
+
+<ParamField path="session_id" type="string" required>
+  Session ID to delete
+</ParamField>
+
+**Example**
+```python
+session_manager.delete_session("a1b2c3d4e5f6")
+```
+
+<Note>
+To fully delete a session, also call:
+- `msg_manager.delete_session_messages(session_id)`
+- `rag_manager.delete_session_memory(session_id)`
+</Note>
+
+## Global Manager Instances
+
+```python
+world_manager = WorldManager()
+char_manager = CharacterManager()
+msg_manager = MessageManager()
+session_manager = SessionManager()
+```
+
+These singleton-like instances are created on module import and used throughout the application.
+
+**Usage Example**
+```python
+from engine.database import world_manager, char_manager
+
+# Access managers directly
+world = world_manager.get_world("fantasy")
+character = char_manager.get_character("elara")
+```
+
+## Complete Usage Example
+
+```python
+from engine.database import (
+    world_manager,
+    char_manager,
+    session_manager,
+    msg_manager,
+    World,
+    Character,
+    Message,
+)
+import uuid
+
+# Create a world
+world = World(
+    id="scifi",
+    name="Neon Nights",
+    lore="A cyberpunk megacity where corporations rule...",
+    start_message="The neon lights flicker as rain pours down...",
+    scene="You stand in a crowded market district.",
+    system_prompt="Maintain a gritty cyberpunk atmosphere."
+)
+world_manager.add_world(world)
+
+# Create a character
+character = Character(
+    id="nova",
+    name="Nova Chen",
+    persona="A street-smart hacker with a sarcastic wit."
+)
+char_manager.add_character(character)
+
+# Create a session
+session_id = uuid.uuid4().hex[:12]
+session = session_manager.create_session(
+    session_id=session_id,
+    character_id="nova",
+    world_id="scifi",
+    model="deepseek-chat"
+)
+
+# Add messages
+msg_manager.add_message(Message(
+    role="assistant",
+    content=world.start_message,
+    character_id="nova",
+    session_id=session_id
+))
+
+msg_manager.add_message(Message(
+    role="user",
+    content="What's happening around here?",
+    character_id="nova",
+    session_id=session_id
+))
+
+# Retrieve conversation history
+messages = msg_manager.get_messages(
+    character_id="nova",
+    session_id=session_id,
+    limit=50
+)
+
+for msg in messages:
+    print(f"{msg.role}: {msg.content}")
+
+# Update session title
+session_manager.update_title(session_id, "First night in the city")
+
+# List recent sessions
+recent = session_manager.list_recent(limit=5)
+for sess in recent:
+    print(f"{sess.title} - Last used: {sess.last_used_at}")
+```

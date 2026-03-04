@@ -1,0 +1,419 @@
+---
+title: Session Management
+description: Create, continue, and delete roleplay sessions
+icon: clock
+---
+
+## Overview
+
+Sessions are individual roleplay instances that combine a character, world, and model. Each session maintains its own conversation history, allowing you to run parallel storylines with different configurations.
+
+## What is a Session?
+
+A session represents a single roleplay conversation with:
+
+- **Character**: Who is speaking (their persona and identity)
+- **World**: Where the story takes place (lore and setting)
+- **Model**: Which AI model generates responses
+- **History**: All messages in the conversation
+- **Memory**: RAG-indexed key moments for retrieval
+
+From `engine/database.py:31-38`:
+
+```python
+class Session(BaseModel):
+    id: str
+    character_id: str
+    world_id: str
+    model: str
+    title: str = ""
+    created_at: str = ""
+    last_used_at: str = ""
+```
+
+## Creating a New Session
+
+<Steps>
+  <Step title="Select a world">
+    ```
+    /world select cyberpunk_city
+    ```
+    Choose the setting for your roleplay.
+  </Step>
+
+  <Step title="Select a character">
+    ```
+    /character select noir_detective
+    ```
+    Choose who you'll be interacting with.
+  </Step>
+
+  <Step title="Create the session">
+    ```
+    /session new
+    ```
+    The engine creates a new session and displays the world's start message.
+  </Step>
+
+  <Step title="Begin roleplaying">
+    Type your first message to begin the conversation.
+  </Step>
+</Steps>
+
+<Info>
+The session ID is automatically generated (12-character hex string). You can view it in the TUI status panel.
+</Info>
+
+## Session Creation Process
+
+From `engine/commands.py:132-175`:
+
+```python
+if cmd == "/session" and parts[1] == "new":
+    if not state.ACTIVE_WORLD_ID or not state.ACTIVE_CHARACTER_ID:
+        await websocket.send_text(
+            build_ws_payload("system_update", "✗ Select world/char first.")
+        )
+    else:
+        state.ACTIVE_SESSION_ID = uuid.uuid4().hex[:12]
+        session_manager.create_session(
+            state.ACTIVE_SESSION_ID,
+            state.ACTIVE_CHARACTER_ID,
+            state.ACTIVE_WORLD_ID,
+            state.CURRENT_MODEL,
+        )
+```
+
+The engine:
+
+1. Validates that world and character are selected
+2. Generates a unique session ID
+3. Creates database entry with timestamp
+4. Retrieves world's `start_message` if defined
+5. Adds start message to chat history
+6. Sends history to TUI
+7. Makes session active
+
+## Start Messages
+
+When you create a session, if the world has a `start_message`, it's automatically added as the first assistant message:
+
+```python
+# From engine/commands.py:149-166
+world = world_manager.get_world(state.ACTIVE_WORLD_ID)
+if world and world.start_message:
+    msg_manager.add_message(
+        Message(
+            role="assistant",
+            content=world.start_message,
+            character_id=state.ACTIVE_CHARACTER_ID,
+            session_id=state.ACTIVE_SESSION_ID,
+        )
+    )
+```
+
+<Note>
+The start message sets the scene without requiring an immediate user response. It's stored as an assistant message in the session history.
+</Note>
+
+## Continuing Existing Sessions
+
+View recent sessions in the TUI or list them programmatically. To continue:
+
+```
+/session continue abc123def456
+```
+
+Replace `abc123def456` with your session ID.
+
+From `engine/commands.py:188-204`:
+
+```python
+elif len(parts) >= 3 and parts[1] == "continue":
+    sess_id = parts[2].strip()
+    sess = session_manager.get_session(sess_id)
+    if sess:
+        state.ACTIVE_SESSION_ID = sess.id
+        state.ACTIVE_WORLD_ID = sess.world_id
+        state.ACTIVE_CHARACTER_ID = sess.character_id
+        if sess.model:
+            state.CURRENT_MODEL = sess.model
+        session_manager.touch(sess_id)
+```
+
+The engine:
+
+1. Loads session from database
+2. Restores world, character, and model settings
+3. Updates `last_used_at` timestamp
+4. Loads full conversation history
+5. Sends history to TUI
+6. Makes session active
+
+<Warning>
+Continuing a session switches your active world and character to match the session's configuration.
+</Warning>
+
+## Session History
+
+Each session stores up to 50 recent messages by default.
+
+From `engine/database.py:212-235`:
+
+```python
+def get_messages(
+    self, character_id: str, session_id: str = "", limit: int = 50
+) -> List[Message]:
+    with sqlite3.connect(self.db_path) as conn:
+        if session_id:
+            cursor = conn.execute(
+                "SELECT id, role, content, character_id, session_id FROM messages "
+                "WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+                (session_id, limit),
+            )
+```
+
+Messages are returned in chronological order (oldest first) for feeding to the LLM.
+
+## Session Memory (RAG)
+
+In addition to message history, sessions maintain a RAG-indexed memory:
+
+```python
+# From engine/main.py:200-201
+mem_key = f"{state.ACTIVE_CHARACTER_ID}_{state.ACTIVE_SESSION_ID}"
+mem_list, _ = rag_manager.query_memory(mem_key, prompt, n_results=3)
+```
+
+Key moments are indexed for semantic retrieval:
+
+- Important story developments
+- Character decisions
+- World state changes
+- Memorable interactions
+
+The engine retrieves the top 3 most relevant memory chunks based on the current user message.
+
+<Info>
+RAG memory allows the AI to recall relevant past events even from sessions with hundreds of messages, without loading the entire history.
+</Info>
+
+## Deleting Sessions
+
+To delete a session and all its data:
+
+```
+/session delete abc123def456
+```
+
+From `engine/commands.py:206-215`:
+
+```python
+elif len(parts) >= 3 and parts[1] == "delete":
+    sess_id = parts[2].strip()
+    session_manager.delete_session(sess_id)
+    msg_manager.delete_session_messages(sess_id)
+    rag_manager.delete_session_memory(sess_id)
+    if state.ACTIVE_SESSION_ID == sess_id:
+        state.ACTIVE_SESSION_ID = ""
+```
+
+This removes:
+
+- Session metadata (SQLite)
+- All messages (SQLite)
+- All RAG memory (ChromaDB)
+
+<Warning>
+Deletion is permanent and cannot be undone. Export important conversations before deleting.
+</Warning>
+
+## Session Listing
+
+The engine tracks the 15 most recently used sessions:
+
+```python
+# From engine/handlers.py:10-13
+recent_sessions = [
+    {"id": s.id, "name": f"[{s.world_id}] {s.character_id}: {s.title[:30]}"}
+    for s in session_manager.list_recent(15)
+]
+```
+
+Sessions are sorted by `last_used_at` (most recent first).
+
+## Session Titles
+
+Session titles are auto-generated from the first user message:
+
+```python
+# From engine/database.py:277-283
+def update_title(self, session_id: str, title: str):
+    short = title[:60] + ("…" if len(title) > 60 else "")
+    with sqlite3.connect(self.db_path) as conn:
+        conn.execute(
+            "UPDATE sessions SET title = ? WHERE id = ?", (short, session_id)
+        )
+```
+
+Titles are truncated to 60 characters for display in the TUI.
+
+## Multiple Sessions Strategy
+
+### Parallel Storylines
+
+Run multiple sessions with the same character in different worlds:
+
+```
+Session 1: noir_detective in cyberpunk_city
+Session 2: noir_detective in space_station
+Session 3: noir_detective in fantasy_realm
+```
+
+Each maintains independent history and memory.
+
+### Scenario Testing
+
+Test different approaches to the same scenario:
+
+```
+Session A: diplomatic_character in political_intrigue (peaceful approach)
+Session B: diplomatic_character in political_intrigue (aggressive approach)
+Session C: diplomatic_character in political_intrigue (neutral approach)
+```
+
+### Model Comparison
+
+Compare model performance with identical setups:
+
+```
+Session X: detective + noir_city + gpt-4o-mini
+Session Y: detective + noir_city + claude-3-haiku
+Session Z: detective + noir_city + gemini-2.0-pro
+```
+
+## Session State Persistence
+
+The engine saves the currently active session to `persist.json`:
+
+```python
+# From engine/state.py:9-19
+def save_state():
+    data = {
+        "world_id": ACTIVE_WORLD_ID,
+        "character_id": ACTIVE_CHARACTER_ID,
+        "session_id": ACTIVE_SESSION_ID,
+        "model": CURRENT_MODEL,
+        "model_confirmed": MODEL_CONFIRMED,
+        "rules": ACTIVE_RULES,
+    }
+    with open(PERSIST_FILE, "w") as f:
+        json.dump(data, f)
+```
+
+This restores your session when restarting the engine.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Name sessions meaningfully">
+    The first user message becomes the title. Start with something descriptive:
+    
+    Good: "Investigating the murder at the Obsidian Tower"
+    
+    Bad: "hi"
+  </Accordion>
+
+  <Accordion title="One session per storyline">
+    Don't mix unrelated conversations in the same session. Create new sessions for new stories.
+  </Accordion>
+
+  <Accordion title="Continue long-running sessions">
+    Sessions can run for hundreds of messages. The RAG memory system prevents context loss.
+  </Accordion>
+
+  <Accordion title="Clean up test sessions">
+    Delete experimental or test sessions to keep your session list manageable.
+  </Accordion>
+
+  <Accordion title="Match models to content">
+    Use fast models (gpt-4o-mini, claude-haiku) for casual roleplay. Use stronger models for complex narratives.
+  </Accordion>
+</AccordionGroup>
+
+## Session Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `/session new` | Create new session with active world/character |
+| `/session continue <id>` | Resume existing session |
+| `/session delete <id>` | Permanently delete session and data |
+
+## Database Schema
+
+```sql
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    character_id TEXT NOT NULL,
+    world_id TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    last_used_at TEXT NOT NULL
+)
+
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    character_id TEXT NOT NULL,
+    session_id TEXT NOT NULL DEFAULT ''
+)
+```
+
+## Troubleshooting
+
+### "Select world/char first" error
+
+You must have both a world and character selected before creating a session:
+
+```
+/world select my_world
+/character select my_character
+/session new
+```
+
+### Session not found
+
+If `/session continue` fails:
+
+- Verify the session ID is correct
+- Check that the session wasn't deleted
+- Ensure the database file (`engine.db`) exists
+
+### Lost conversation history
+
+If messages don't appear when continuing:
+
+- Check that messages are associated with the correct session ID
+- Verify the database hasn't been reset
+- Review engine logs for message loading errors
+
+### Memory not working
+
+If the AI doesn't recall past events:
+
+- Ensure ChromaDB path is configured correctly
+- Check that the RAG memory manager is indexing messages
+- Verify the memory collection exists for your session
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Rules" icon="gavel" href="/guides/custom-rules">
+    Modify session behavior with custom rules
+  </Card>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Configure models and API keys
+  </Card>
+</CardGroup>

@@ -1,0 +1,398 @@
+---
+title: "/session Commands"
+description: "Create, continue, and delete storytelling sessions"
+---
+
+## Overview
+
+The `/session` command family controls the lifecycle of storytelling sessions. Sessions are the core containers for your narratives, combining a world, character, and conversation history.
+
+## Commands
+
+### /session new
+
+Creates a new session with the currently active world and character.
+
+```bash
+/session new
+```
+
+### /session continue
+
+Resumes an existing session, loading its history and context.
+
+```bash
+/session continue <session_id>
+```
+
+### /session delete
+
+Permanently deletes a session and all associated data.
+
+```bash
+/session delete <session_id>
+```
+
+---
+
+## /session new
+
+### Syntax
+
+```bash
+/session new
+```
+
+### Parameters
+
+No parameters required. Uses current engine state.
+
+### Prerequisites
+
+Before creating a new session, you must have:
+
+1. An active world selected via `/world select`
+2. An active character selected via `/character select`
+
+<Warning>
+Attempting to create a session without both world and character will result in: `✗ Select world/char first.`
+</Warning>
+
+### Behavior
+
+1. Validates that `state.ACTIVE_WORLD_ID` and `state.ACTIVE_CHARACTER_ID` are set
+2. Generates a new 12-character hexadecimal session ID
+3. Creates a session record via `session_manager.create_session()` with:
+   - Session ID
+   - Character ID
+   - World ID
+   - Current model
+4. Saves the session ID to `state.ACTIVE_SESSION_ID` and persists state
+5. Retrieves the world's `start_message` if configured
+6. Adds the start message to the session history as an assistant message
+7. Sends confirmation and broadcasts state
+8. Sends the chat history with the start message to the client
+
+### Examples
+
+#### Create a New Session
+
+```bash
+# First, set up world and character
+/world select medieval-kingdom
+/character select sir-alderan
+
+# Create the session
+/session new
+```
+
+**Expected Output:**
+```
+✓ New session: a1b2c3d4e5f6
+```
+
+If the world has a start message configured, it will appear in the chat:
+
+```
+[Assistant]: You stand at the gates of Ravencrest Castle, the morning mist swirling around the ancient stone walls...
+```
+
+### WebSocket Response
+
+The engine sends multiple events:
+
+1. **System Update**
+
+```json
+{
+  "event": "system_update",
+  "payload": {
+    "content": "✓ New session: a1b2c3d4e5f6",
+    "metadata": {
+      "session_id": "a1b2c3d4e5f6"
+    }
+  }
+}
+```
+
+2. **State Broadcast** (via `broadcast_sync_state`)
+
+3. **Chat History** (if start message exists)
+
+```json
+{
+  "event": "chat_history",
+  "payload": {
+    "content": "",
+    "metadata": {
+      "history": [
+        {
+          "role": "assistant",
+          "content": "You stand at the gates..."
+        }
+      ]
+    }
+  }
+}
+```
+
+---
+
+## /session continue
+
+### Syntax
+
+```bash
+/session continue <session_id>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `session_id` | string | Yes | The unique identifier of the session to resume |
+
+### Behavior
+
+1. Retrieves the session via `session_manager.get_session()`
+2. If session exists:
+   - Sets `state.ACTIVE_SESSION_ID` to the session ID
+   - Restores `state.ACTIVE_WORLD_ID` from session data
+   - Restores `state.ACTIVE_CHARACTER_ID` from session data
+   - Restores `state.CURRENT_MODEL` from session data (if present)
+   - Updates session's last accessed time via `session_manager.touch()`
+   - Persists state changes
+   - Sends complete chat history to client
+   - Broadcasts synchronized state
+3. If session doesn't exist, command is silently ignored
+
+### Examples
+
+#### Continue a Session
+
+```bash
+/session continue a1b2c3d4e5f6
+```
+
+**Expected Output:**
+
+The chat history loads and displays all previous messages from the session. The engine state is restored to match the session.
+
+#### Continue a Different Session
+
+```bash
+/session continue 9z8y7x6w5v4u
+```
+
+### WebSocket Response
+
+The engine sends:
+
+1. **Chat History Event** with all messages from the session
+2. **State Broadcast** with updated active IDs
+
+<Info>
+Continuing a session automatically restores the world, character, and model that were active when the session was created.
+</Info>
+
+---
+
+## /session delete
+
+### Syntax
+
+```bash
+/session delete <session_id>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `session_id` | string | Yes | The unique identifier of the session to delete |
+
+### Behavior
+
+1. Deletes the session record via `session_manager.delete_session()`
+2. Deletes all messages associated with the session via `msg_manager.delete_session_messages()`
+3. Deletes session memory from RAG system via `rag_manager.delete_session_memory()`
+4. If the deleted session was currently active, clears `state.ACTIVE_SESSION_ID`
+5. Sends confirmation message
+6. Broadcasts synchronized state
+
+<Warning>
+**This operation is permanent and cannot be undone.** All conversation history, session data, and associated memory will be permanently deleted.
+</Warning>
+
+### Examples
+
+#### Delete a Session
+
+```bash
+/session delete a1b2c3d4e5f6
+```
+
+**Expected Output:**
+```
+✓ Deleted session a1b2c3d4e5f6
+```
+
+#### Delete Currently Active Session
+
+```bash
+/session delete 9z8y7x6w5v4u
+```
+
+If this was the active session, `state.ACTIVE_SESSION_ID` is cleared.
+
+### WebSocket Response
+
+```json
+{
+  "event": "system_update",
+  "payload": {
+    "content": "✓ Deleted session a1b2c3d4e5f6",
+    "metadata": {}
+  }
+}
+```
+
+## Source Code Reference
+
+Implemented in `engine/commands.py:132-215`:
+
+```python
+elif cmd == "/session":
+    if len(parts) >= 2 and parts[1] == "new":
+        if not state.ACTIVE_WORLD_ID or not state.ACTIVE_CHARACTER_ID:
+            await websocket.send_text(
+                build_ws_payload("system_update", "✗ Select world/char first.")
+            )
+        else:
+            state.ACTIVE_SESSION_ID = uuid.uuid4().hex[:12]
+            session_manager.create_session(
+                state.ACTIVE_SESSION_ID,
+                state.ACTIVE_CHARACTER_ID,
+                state.ACTIVE_WORLD_ID,
+                state.CURRENT_MODEL,
+            )
+            state.save_state()
+
+            # Check for Start Message
+            world = world_manager.get_world(state.ACTIVE_WORLD_ID)
+            start_history = []
+            if world:
+                if world.start_message:
+                    msg_manager.add_message(
+                        Message(
+                            role="assistant",
+                            content=world.start_message,
+                            character_id=state.ACTIVE_CHARACTER_ID,
+                            session_id=state.ACTIVE_SESSION_ID,
+                        )
+                    )
+                    start_history.append(
+                        {"role": "assistant", "content": world.start_message}
+                    )
+
+            await websocket.send_text(
+                build_ws_payload(
+                    "system_update",
+                    f"✓ New session: {state.ACTIVE_SESSION_ID}",
+                    {"session_id": state.ACTIVE_SESSION_ID},
+                )
+            )
+            await broadcast_sync_state(websocket)
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "event": "chat_history",
+                        "payload": {
+                            "content": "",
+                            "metadata": {"history": start_history},
+                        },
+                    }
+                )
+            )
+    elif len(parts) >= 3 and parts[1] == "continue":
+        sess_id = parts[2].strip()
+        sess = session_manager.get_session(sess_id)
+        if sess:
+            state.ACTIVE_SESSION_ID = sess.id
+            state.ACTIVE_WORLD_ID = sess.world_id
+            state.ACTIVE_CHARACTER_ID = sess.character_id
+            if sess.model:
+                state.CURRENT_MODEL = sess.model
+            session_manager.touch(sess_id)
+            state.save_state()
+            await send_chat_history(
+                websocket, state.ACTIVE_CHARACTER_ID, state.ACTIVE_SESSION_ID
+            )
+            await broadcast_sync_state(websocket)
+    elif len(parts) >= 3 and parts[1] == "delete":
+        sess_id = parts[2].strip()
+        session_manager.delete_session(sess_id)
+        msg_manager.delete_session_messages(sess_id)
+        rag_manager.delete_session_memory(sess_id)
+        if state.ACTIVE_SESSION_ID == sess_id:
+            state.ACTIVE_SESSION_ID = ""
+        await websocket.send_text(
+            build_ws_payload("system_update", f"✓ Deleted session {sess_id}")
+        )
+        await broadcast_sync_state(websocket)
+```
+
+## Complete Workflow Example
+
+```bash
+# Set up your environment
+/world select cyberpunk-2089
+/character select jack-winters
+
+# Start a new session
+/session new
+# Output: ✓ New session: f1e2d3c4b5a6
+
+# Play through your session...
+# (Have conversations, make choices, etc.)
+
+# Later, continue the session
+/session continue f1e2d3c4b5a6
+# (All history loads)
+
+# When finished, optionally delete
+/session delete f1e2d3c4b5a6
+# Output: ✓ Deleted session f1e2d3c4b5a6
+```
+
+## Session Metadata
+
+Each session stores:
+
+- **id**: 12-character hexadecimal identifier
+- **character_id**: The character used in this session
+- **world_id**: The world used in this session
+- **model**: The AI model used when session was created
+- **created_at**: Timestamp of session creation
+- **last_accessed**: Timestamp of last interaction (updated by `touch()`)
+
+## Common Issues
+
+<Warning>
+**Cannot create session**: Ensure both world and character are selected first using `/world select` and `/character select`.
+</Warning>
+
+<Warning>
+**Session not found**: When using `continue` or `delete`, verify the session ID is correct. Invalid IDs are silently ignored for `continue`.
+</Warning>
+
+<Tip>
+Session IDs are 12 characters long and use hexadecimal format (0-9, a-f). Copy them carefully to avoid typos.
+</Tip>
+
+## Related
+
+- [World Commands](/commands/world) - Select worlds for sessions
+- [Character Commands](/commands/character) - Select characters for sessions
+- [Model Commands](/commands/model) - Change models mid-session
+- [Sessions API](/api-reference/sessions) - Manage sessions programmatically

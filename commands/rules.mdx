@@ -1,0 +1,418 @@
+---
+title: "/rules Commands"
+description: "Manage content rules and NSFW mode"
+---
+
+## Overview
+
+The `/rules` command family allows you to activate and manage content rules that modify the AI's behavior. Rules are defined in YAML files and can control tone, content restrictions, narrative style, and more.
+
+## Commands
+
+### /rules add
+
+Activates a specific rule by its ID.
+
+```bash
+/rules add <rule_id>
+```
+
+### /rules clear
+
+Deactivates all currently active rules.
+
+```bash
+/rules clear
+```
+
+### /nsfw
+
+Quick toggle for NSFW (Not Safe For Work) mode.
+
+```bash
+/nsfw
+```
+
+---
+
+## /rules add
+
+### Syntax
+
+```bash
+/rules add <rule_id>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `rule_id` | string | Yes | The identifier of the rule to activate (must correspond to a YAML file in `assets/rules/`) |
+
+### Behavior
+
+1. Checks if the rule file exists at `assets/rules/<rule_id>.yaml`
+2. If the file exists and the rule isn't already active:
+   - Adds `rule_id` to `state.ACTIVE_RULES` list
+   - Persists state via `state.save_state()`
+   - Sends confirmation message
+   - Broadcasts state change to all clients
+3. If the rule is already active, it remains in the list (idempotent)
+4. If the file doesn't exist, the command is silently ignored
+
+<Info>
+Multiple rules can be active simultaneously. They are applied in the order they appear in the `ACTIVE_RULES` list.
+</Info>
+
+### Examples
+
+#### Activate a Custom Rule
+
+```bash
+/rules add dark_fantasy
+```
+
+**Expected Output:**
+```
+✓ Rule 'dark_fantasy' activated
+```
+
+#### Activate a Tone Rule
+
+```bash
+/rules add dramatic
+```
+
+**Expected Output:**
+```
+✓ Rule 'dramatic' activated
+```
+
+#### Activate Multiple Rules
+
+```bash
+/rules add horror
+/rules add first_person
+/rules add detailed_descriptions
+```
+
+**Expected Output:**
+```
+✓ Rule 'horror' activated
+✓ Rule 'first_person' activated
+✓ Rule 'detailed_descriptions' activated
+```
+
+### WebSocket Response
+
+```json
+{
+  "event": "system_update",
+  "payload": {
+    "content": "✓ Rule 'dark_fantasy' activated",
+    "metadata": {
+      "active_rules": ["dark_fantasy"]
+    }
+  }
+}
+```
+
+---
+
+## /rules clear
+
+### Syntax
+
+```bash
+/rules clear
+```
+
+### Parameters
+
+No parameters required.
+
+### Behavior
+
+1. Clears all entries from `state.ACTIVE_RULES` list
+2. Persists the change via `state.save_state()`
+3. Sends confirmation message
+4. Broadcasts state change to all clients
+
+### Examples
+
+#### Clear All Rules
+
+```bash
+/rules clear
+```
+
+**Expected Output:**
+```
+✓ All active rules cleared
+```
+
+### WebSocket Response
+
+```json
+{
+  "event": "system_update",
+  "payload": {
+    "content": "✓ All active rules cleared",
+    "metadata": {
+      "active_rules": []
+    }
+  }
+}
+```
+
+<Tip>
+Use `/rules clear` to reset to default AI behavior before activating a new set of rules.
+</Tip>
+
+---
+
+## /nsfw
+
+### Syntax
+
+```bash
+/nsfw
+```
+
+### Parameters
+
+No parameters required.
+
+### Behavior
+
+The `/nsfw` command is a special toggle that:
+
+1. Checks if `"nsfw"` is in `state.ACTIVE_RULES`
+2. **If NOT active**:
+   - Verifies `assets/rules/nsfw.yaml` exists
+   - Adds `"nsfw"` to `state.ACTIVE_RULES`
+   - Sends "NSFW mode ENABLED" message
+3. **If already active**:
+   - Removes `"nsfw"` from `state.ACTIVE_RULES`
+   - Sends "NSFW mode DISABLED" message
+4. Persists state and broadcasts changes
+
+<Warning>
+NSFW mode removes content restrictions and allows unrestricted adult content. Use responsibly and in accordance with your AI provider's terms of service.
+</Warning>
+
+### Examples
+
+#### Enable NSFW Mode
+
+```bash
+/nsfw
+```
+
+**Expected Output (when disabled):**
+```
+✓ NSFW mode ENABLED - Unrestricted adult content
+```
+
+#### Disable NSFW Mode
+
+```bash
+/nsfw
+```
+
+**Expected Output (when enabled):**
+```
+✓ NSFW mode DISABLED - Back to standard content
+```
+
+### WebSocket Response (Enabling)
+
+```json
+{
+  "event": "system_update",
+  "payload": {
+    "content": "✓ NSFW mode ENABLED - Unrestricted adult content",
+    "metadata": {
+      "active_rules": ["nsfw"]
+    }
+  }
+}
+```
+
+### WebSocket Response (Disabling)
+
+```json
+{
+  "event": "system_update",
+  "payload": {
+    "content": "✓ NSFW mode DISABLED - Back to standard content",
+    "metadata": {
+      "active_rules": []
+    }
+  }
+}
+```
+
+### NSFW File Not Found
+
+If `assets/rules/nsfw.yaml` doesn't exist:
+
+**Expected Output:**
+```
+✗ NSFW rule file not found.
+```
+
+## Source Code Reference
+
+Implemented in `engine/commands.py:75-130`:
+
+```python
+elif cmd == "/rules":
+    if len(parts) >= 3 and parts[1] == "add":
+        rule_id = parts[2].strip()
+        if os.path.exists(f"assets/rules/{rule_id}.yaml"):
+            if rule_id not in state.ACTIVE_RULES:
+                state.ACTIVE_RULES.append(rule_id)
+            state.save_state()
+            await websocket.send_text(
+                build_ws_payload(
+                    "system_update",
+                    f"✓ Rule '{rule_id}' activated",
+                    {"active_rules": state.ACTIVE_RULES},
+                )
+            )
+            await broadcast_sync_state(websocket)
+    elif len(parts) >= 2 and parts[1] == "clear":
+        state.ACTIVE_RULES.clear()
+        state.save_state()
+        await websocket.send_text(
+            build_ws_payload(
+                "system_update",
+                "✓ All active rules cleared",
+                {"active_rules": state.ACTIVE_RULES},
+            )
+        )
+        await broadcast_sync_state(websocket)
+
+elif cmd == "/nsfw":
+    # Quick toggle for NSFW mode
+    if "nsfw" not in state.ACTIVE_RULES:
+        if os.path.exists("assets/rules/nsfw.yaml"):
+            state.ACTIVE_RULES.append("nsfw")
+            state.save_state()
+            await websocket.send_text(
+                build_ws_payload(
+                    "system_update",
+                    "✓ NSFW mode ENABLED - Unrestricted adult content",
+                    {"active_rules": state.ACTIVE_RULES},
+                )
+            )
+            await broadcast_sync_state(websocket)
+        else:
+            await websocket.send_text(
+                build_ws_payload("system_update", "✗ NSFW rule file not found.")
+            )
+    else:
+        state.ACTIVE_RULES.remove("nsfw")
+        state.save_state()
+        await websocket.send_text(
+            build_ws_payload(
+                "system_update",
+                "✓ NSFW mode DISABLED - Back to standard content",
+                {"active_rules": state.ACTIVE_RULES},
+            )
+        )
+        await broadcast_sync_state(websocket)
+```
+
+## Rule Files
+
+Rules are defined as YAML files in the `assets/rules/` directory. Each rule file typically contains:
+
+- **name**: Display name for the rule
+- **description**: What the rule does
+- **instructions**: Directives for the AI model
+- **examples**: Sample outputs demonstrating the rule
+
+### Example Rule Structure
+
+```yaml
+name: Dark Fantasy
+description: Emphasizes grim, dark fantasy themes
+instructions: |
+  Use darker, more gothic language.
+  Emphasize danger, moral ambiguity, and consequences.
+  Maintain a somber, atmospheric tone.
+examples:
+  - "The shadows seem to watch you with hungry eyes."
+  - "Victory came at a terrible price."
+```
+
+## Use Cases
+
+### Creating a Horror Atmosphere
+
+```bash
+/rules add horror
+/rules add dark_atmosphere
+/rules add suspenseful
+```
+
+### Setting Narrative Style
+
+```bash
+/rules add first_person
+/rules add descriptive
+```
+
+### Enabling Mature Content
+
+```bash
+/nsfw
+```
+
+### Resetting to Default
+
+```bash
+/rules clear
+```
+
+## Common Issues
+
+<Warning>
+**Rule not found**: If the YAML file doesn't exist in `assets/rules/`, the command is silently ignored. Verify your rule files are properly placed.
+</Warning>
+
+<Warning>
+**Rule not taking effect**: Rules are applied during AI prompt construction. You may need to send a new message to see the effect.
+</Warning>
+
+<Tip>
+Rule IDs must exactly match the filename (without `.yaml` extension). Rules are case-sensitive.
+</Tip>
+
+## State Persistence
+
+Active rules are persisted to disk via `state.save_state()`, meaning:
+
+- Rules remain active across engine restarts
+- Rule state is synchronized across all connected clients
+- Changes take effect immediately for new messages
+
+## Multiple Rules Interaction
+
+When multiple rules are active:
+
+- Rules are applied in the order they appear in `ACTIVE_RULES`
+- Later rules can modify or enhance earlier rules
+- Conflicting rules may produce unpredictable results
+
+<Tip>
+Experiment with different rule combinations to find the perfect narrative style for your story.
+</Tip>
+
+## Related
+
+- [Rules Configuration](/configuration/rules) - Create custom rule files
+- [Content Safety](/guides/content-safety) - Understanding content moderation
+- [Prompt Engineering](/guides/prompt-engineering) - How rules affect AI prompts

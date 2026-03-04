@@ -1,0 +1,469 @@
+---
+title: Custom Rules
+description: Create custom rule YAML files to modify AI behavior
+icon: gavel
+---
+
+## Overview
+
+Rules are modular system prompts that modify AI behavior during sessions. They allow you to dynamically adjust tone, content restrictions, narrative style, and other behavioral aspects without editing world or character files.
+
+## Why Use Rules?
+
+Rules provide flexibility:
+
+- **Modular**: Apply different rulesets to the same character/world combination
+- **Reusable**: Use the same rules across multiple sessions
+- **Dynamic**: Activate or deactivate rules mid-session
+- **Layered**: Stack multiple rules for combined effects
+
+<Info>
+Rules are injected into the system prompt at runtime. They modify AI behavior without altering the underlying world lore or character persona.
+</Info>
+
+## Rule File Structure
+
+Rules are defined as YAML files in the `assets/rules/` directory.
+
+### Required Fields
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the rule. Used in commands to activate/deactivate.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Display name shown in the TUI rules selector.
+</ParamField>
+
+<ParamField path="prompt" type="string" required>
+  The instruction text that modifies AI behavior. This is injected into the system prompt.
+</ParamField>
+
+## Basic Example
+
+From `assets_example/rules/gritty.yaml`:
+
+```yaml
+id: "gritty"
+name: "Gritty Realism"
+prompt: "The world is dark, dangerous, and unforgiving. Actions have heavy consequences."
+```
+
+<Steps>
+  <Step title="Create the YAML file">
+    ```bash
+    touch assets/rules/my_rule.yaml
+    ```
+  </Step>
+
+  <Step title="Define the rule">
+    Add the required fields with your rule content.
+  </Step>
+
+  <Step title="Restart the engine">
+    Rules are loaded on startup:
+    ```bash
+    python -m engine.main
+    ```
+  </Step>
+
+  <Step title="Activate the rule">
+    ```
+    /rules add my_rule
+    ```
+  </Step>
+</Steps>
+
+## Advanced Examples
+
+### Tone Modifiers
+
+```yaml horror.yaml
+id: "horror"
+name: "Horror Atmosphere"
+prompt: |
+  Emphasize dread, tension, and the unknown. Use sensory details to create
+  unease: flickering shadows, distant sounds, things glimpsed in peripheral
+  vision. Build slowly. The most terrifying things are those not fully seen.
+  
+  Avoid:
+  - Jump scares or sudden gore
+  - Explaining everything (mystery is key)
+  - Making the protagonist helpless (fear is strongest when there's a chance)
+```
+
+### Content Restrictions
+
+```yaml family_friendly.yaml
+id: "family_friendly"
+name: "Family Friendly"
+prompt: |
+  Keep all content appropriate for ages 13+. No graphic violence, sexual content,
+  excessive profanity, or disturbing themes. Handle conflict and danger in an
+  adventure-appropriate way. Focus on heroism, problem-solving, and positive
+  character growth.
+```
+
+### Narrative Style
+
+```yaml noir_style.yaml
+id: "noir"
+name: "Noir Narration"
+prompt: |
+  Narrate in classic noir style:
+  - Use hardboiled, cynical language
+  - Employ similes and metaphors ("She was trouble in a red dress")
+  - Describe environments atmospherically (rain, shadows, neon, smoke)
+  - Keep dialogue snappy and loaded with subtext
+  - Everyone has secrets, nothing is as it seems
+  
+  Example tone: "The rain came down like it had a grudge. In this city, even
+  the weather knew you were guilty of something."
+```
+
+### Mechanical Rules
+
+```yaml combat_detailed.yaml
+id: "combat_detailed"
+name: "Detailed Combat"
+prompt: |
+  During combat scenes:
+  - Describe actions in specific physical detail
+  - Track wounds and fatigue realistically
+  - Consider environment, positioning, and tactics
+  - Make combat risky and consequential
+  - Victory should require strategy, not just power
+  
+  Example: Instead of "You hit him", write "Your fist connects with his jaw,
+  snapping his head back. He staggers, spitting blood, but stays on his feet."
+```
+
+### Content Expansion
+
+```yaml nsfw.yaml
+id: "nsfw"
+name: "NSFW Mode"
+prompt: |
+  You are in NSFW mode. You may include:
+  - Adult sexual content and explicit descriptions
+  - Graphic violence and gore
+  - Dark, disturbing, or taboo themes
+  - Strong profanity
+  
+  Always maintain:
+  - Consent between characters in intimate scenes
+  - Narrative coherence and character consistency
+  - Quality writing (explicit ≠ low quality)
+  
+  The user is an adult who has opted into this content.
+```
+
+<Warning>
+NSFW rules remove content restrictions. Only use with appropriate models and in private sessions.
+</Warning>
+
+## Rule Loading Process
+
+Rules are loaded from YAML files at startup:
+
+```python
+# From engine/state.py:58-61
+available_rules = [
+    {"id": d["id"], "name": d.get("name", d["id"])}
+    for d in load_yaml_assets("assets/rules/*.yaml")
+]
+```
+
+When activated, rules are injected into the system prompt:
+
+```python
+# From engine/llm.py:83-86
+for rule_id in state.ACTIVE_RULES:
+    with open(f"assets/rules/{rule_id}.yaml", "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+        rule_prompts.append(data.get("prompt", ""))
+```
+
+All active rule prompts are concatenated and included in the system message sent to the LLM.
+
+## Activating Rules
+
+### Add a Rule
+
+```
+/rules add gritty
+```
+
+From `engine/commands.py:76-89`:
+
+```python
+if len(parts) >= 3 and parts[1] == "add":
+    rule_id = parts[2].strip()
+    if os.path.exists(f"assets/rules/{rule_id}.yaml"):
+        if rule_id not in state.ACTIVE_RULES:
+            state.ACTIVE_RULES.append(rule_id)
+        state.save_state()
+```
+
+The rule is immediately active for all subsequent messages.
+
+### Clear All Rules
+
+```
+/rules clear
+```
+
+Removes all active rules, returning to base behavior.
+
+### Quick NSFW Toggle
+
+```
+/nsfw
+```
+
+Toggles the `nsfw` rule on/off (if the rule file exists).
+
+<Info>
+Rules are saved to `persist.json` and persist across engine restarts.
+</Info>
+
+## Stacking Multiple Rules
+
+You can activate multiple rules simultaneously:
+
+```
+/rules add noir
+/rules add combat_detailed
+/rules add gritty
+```
+
+All rule prompts are injected into the system message in the order they were added. This allows layered behavior modification:
+
+- `noir`: Sets narrative style
+- `combat_detailed`: Defines how combat is handled
+- `gritty`: Adds consequence and tone
+
+The result: noir-style narration with detailed, consequential combat.
+
+<Warning>
+Conflicting rules may produce unpredictable results. For example, combining "horror" and "comedy" rules might confuse the AI.
+</Warning>
+
+## Rule Categories
+
+Organize rules by purpose:
+
+### Tone Rules
+
+Modify emotional atmosphere:
+- `horror.yaml`: Dread and tension
+- `lighthearted.yaml`: Fun and comedic
+- `epic.yaml`: Grand and heroic
+- `melancholic.yaml`: Sad and reflective
+
+### Content Rules
+
+Control what appears:
+- `family_friendly.yaml`: Age-appropriate content
+- `nsfw.yaml`: Adult content
+- `low_violence.yaml`: Minimal combat
+- `high_violence.yaml`: Graphic action
+
+### Style Rules
+
+Define narrative approach:
+- `noir.yaml`: Hardboiled detective style
+- `poetic.yaml`: Lyrical descriptions
+- `terse.yaml`: Minimal, clipped sentences
+- `verbose.yaml`: Rich, detailed prose
+
+### Mechanical Rules
+
+Specify how systems work:
+- `combat_detailed.yaml`: Blow-by-blow combat
+- `dialogue_focused.yaml`: Emphasize conversation
+- `investigation.yaml`: Clue-based mysteries
+- `sandbox.yaml`: Player-driven exploration
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Keep rules focused">
+    Each rule should do one thing well. Don't create mega-rules that try to control everything.
+  </Accordion>
+
+  <Accordion title="Use clear, directive language">
+    Write rule prompts as instructions, not descriptions. "Emphasize X" is better than "X is important."
+  </Accordion>
+
+  <Accordion title="Provide examples">
+    Show the AI what you mean with concrete examples in the rule prompt.
+  </Accordion>
+
+  <Accordion title="Test rule combinations">
+    Before using rules in important sessions, test how they interact with your characters and worlds.
+  </Accordion>
+
+  <Accordion title="Version your rules">
+    If you update a rule significantly, consider creating a new version (e.g., `combat_v2.yaml`).
+  </Accordion>
+</AccordionGroup>
+
+## Rule Template
+
+```yaml template.yaml
+id: "rule_identifier"
+name: "Human Readable Name"
+prompt: |
+  Clear, directive instructions for the AI.
+  
+  What to do:
+  - Specific behavior 1
+  - Specific behavior 2
+  - Specific behavior 3
+  
+  What to avoid:
+  - Unwanted behavior 1
+  - Unwanted behavior 2
+  
+  Example of desired output:
+  [Concrete example here]
+```
+
+## Runtime Rule Management
+
+### View Active Rules
+
+The TUI displays active rules in the state panel. Programmatically:
+
+```python
+# From engine/state.py:48
+ACTIVE_RULES = []  # List of active rule IDs
+```
+
+### Persisted State
+
+Active rules are saved to `persist.json`:
+
+```json
+{
+  "world_id": "cyberpunk_city",
+  "character_id": "detective",
+  "session_id": "abc123def456",
+  "model": "gpt-4o-mini",
+  "rules": ["noir", "combat_detailed"]
+}
+```
+
+Rules reactivate automatically when restarting the engine.
+
+## System Prompt Injection
+
+Rules are injected into the system prompt before each LLM call:
+
+```python
+# Simplified from engine/llm.py
+system_parts = [
+    base_system_prompt,
+    character.persona,
+    world.system_prompt,
+    *rule_prompts,  # All active rules
+]
+
+system_message = "\n\n".join(system_parts)
+```
+
+Order of precedence:
+1. Base engine instructions
+2. Character persona
+3. World system prompt
+4. Active rules (in activation order)
+
+Later instructions can override earlier ones, so rules have high priority.
+
+## Creating Rule Collections
+
+Create themed rule sets for different play styles:
+
+### Investigation Pack
+
+```
+assets/rules/investigation/
+├── mystery_focus.yaml
+├── clue_based.yaml
+└── cerebral_tone.yaml
+```
+
+Activate all at once:
+```
+/rules add mystery_focus
+/rules add clue_based
+/rules add cerebral_tone
+```
+
+### Combat Pack
+
+```
+assets/rules/combat/
+├── tactical.yaml
+├── detailed_combat.yaml
+└── high_stakes.yaml
+```
+
+### Social Pack
+
+```
+assets/rules/social/
+├── dialogue_focused.yaml
+├── political_intrigue.yaml
+└── relationship_dynamics.yaml
+```
+
+<Tip>
+The engine loads rules from subdirectories if you update the glob pattern to `assets/rules/**/*.yaml`.
+</Tip>
+
+## Troubleshooting
+
+### Rule not found
+
+If `/rules add` fails:
+
+- Verify the rule file exists in `assets/rules/`
+- Check that the ID matches the filename (without `.yaml`)
+- Ensure the YAML is valid and has an `id` field
+- Restart the engine to reload rule assets
+
+### Rule not affecting behavior
+
+- Check that the rule prompt is clear and directive
+- Verify the rule is in the active rules list
+- Test with a stronger model (some models ignore weak instructions)
+- Ensure other rules aren't contradicting it
+- Review the system prompt to see if rule injection is working
+
+### Rules conflicting
+
+- Clear all rules and add them one at a time to identify conflicts
+- Reorder rule activation (later rules override earlier ones)
+- Rewrite conflicting rules to be more compatible
+- Use fewer, more focused rules instead of many broad ones
+
+## Command Reference
+
+| Command | Description |
+|---------|-------------|
+| `/rules add <rule_id>` | Activate a rule |
+| `/rules clear` | Deactivate all rules |
+| `/nsfw` | Toggle NSFW mode (if rule exists) |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Worlds" icon="globe" href="/guides/creating-worlds">
+    Design worlds that work with your rules
+  </Card>
+  <Card title="Creating Characters" icon="user" href="/guides/creating-characters">
+    Create characters that respond to rules
+  </Card>
+</CardGroup>

@@ -1,0 +1,196 @@
+---
+title: "/character Command"
+description: "Select and activate characters for your sessions"
+---
+
+## Overview
+
+The `/character select` command activates a specific character for your storytelling sessions. Characters define the protagonist or viewpoint through which your narrative unfolds.
+
+## Syntax
+
+```bash
+/character select <character_id>
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `character_id` | string | Yes | The unique identifier of the character to activate |
+
+## Behavior
+
+When you execute `/character select`:
+
+1. Sets `state.ACTIVE_CHARACTER_ID` to the specified character ID
+2. Persists the change via `state.save_state()`
+3. Sends a system update confirmation
+4. Broadcasts the state change to all connected clients via `broadcast_sync_state()`
+
+<Info>
+Selecting a character is a prerequisite for creating new sessions. Both a world and character must be active before starting a session.
+</Info>
+
+## Examples
+
+### Select a Character
+
+```bash
+/character select aria-moonwhisper
+```
+
+**Expected Output:**
+```
+Active character set to aria-moonwhisper
+```
+
+### Select Another Character
+
+```bash
+/character select kai-stormblade
+```
+
+**Expected Output:**
+```
+Active character set to kai-stormblade
+```
+
+### Select Character with Numeric ID
+
+```bash
+/character select char_001
+```
+
+**Expected Output:**
+```
+Active character set to char_001
+```
+
+## WebSocket Response
+
+The engine sends a `system_update` event with the following payload:
+
+```json
+{
+  "event": "system_update",
+  "payload": {
+    "content": "Active character set to aria-moonwhisper",
+    "metadata": {
+      "character_id": "aria-moonwhisper"
+    }
+  }
+}
+```
+
+Followed by a state synchronization broadcast to all connected WebSocket clients.
+
+## Source Code Reference
+
+Implemented in `engine/commands.py:63-73`:
+
+```python
+elif cmd == "/character" and len(parts) >= 3 and parts[1] == "select":
+    state.ACTIVE_CHARACTER_ID = parts[2].strip()
+    state.save_state()
+    await websocket.send_text(
+        build_ws_payload(
+            "system_update",
+            f"Active character set to {state.ACTIVE_CHARACTER_ID}",
+            {"character_id": state.ACTIVE_CHARACTER_ID},
+        )
+    )
+    await broadcast_sync_state(websocket)
+```
+
+## Workflow Integration
+
+The typical workflow for starting a new session:
+
+```bash
+# Step 1: Select a world
+/world select forgotten-realms
+
+# Step 2: Select a character
+/character select elara-swiftwind
+
+# Step 3: Create a new session
+/session new
+```
+
+<Info>
+If you attempt to create a session without selecting both a world and character, you'll receive an error: `✗ Select world/char first.`
+</Info>
+
+## Use Cases
+
+### Starting a New Adventure
+
+Select your protagonist before beginning:
+
+```bash
+/character select theron-shadowheart
+```
+
+### Switching Perspectives
+
+Change characters mid-session to explore different viewpoints:
+
+```bash
+/character select lyra-frostborn
+```
+
+<Warning>
+Switching characters mid-session will affect the context of future messages, but does not change the character associated with existing session messages.
+</Warning>
+
+### Continuing an Existing Session
+
+When you continue a session with `/session continue`, the character is automatically restored:
+
+```bash
+/session continue abc123def456
+# Character is automatically set from session data
+```
+
+## Character Management
+
+Characters are managed through the `char_manager` database interface. Each character has:
+
+- **ID**: Unique identifier
+- **Name**: Display name
+- **Description**: Character background and traits
+- **Persona**: Personality and behavioral characteristics
+- **Example dialogues**: Sample interactions for AI reference
+
+<Tip>
+You can create and manage characters through the API endpoints or by using the character management interface.
+</Tip>
+
+## Common Issues
+
+<Warning>
+**Missing subcommand**: The command requires `select` as the second parameter. `/character` alone will be ignored.
+</Warning>
+
+<Warning>
+**Invalid character ID**: While the command doesn't validate existence immediately, using a non-existent character ID may cause issues when creating or continuing sessions.
+</Warning>
+
+<Warning>
+**Insufficient parameters**: The command requires exactly 3 parts: `/character select <character_id>`. Missing the ID will cause the command to be ignored.
+</Warning>
+
+## State Persistence
+
+The active character selection is persisted to disk immediately via `state.save_state()`. This means:
+
+- Your character selection survives engine restarts
+- The character is available for session creation after restart
+- The state is synchronized across all connected clients
+
+## Related
+
+- [World Commands](/commands/world) - Select worlds to pair with characters
+- [Session Commands](/commands/session) - Create sessions using world and character
+- [Character API](/api-reference/characters) - Manage characters programmatically

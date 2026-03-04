@@ -1,0 +1,377 @@
+---
+title: RAG system
+description: ChromaDB vector storage, embeddings, and semantic retrieval for lore and memory
+---
+
+## Architecture Overview
+
+Flower Engine implements a dual-collection RAG (Retrieval-Augmented Generation) system using ChromaDB for persistent vector storage. The system maintains separate collections for world lore and session memory, enabling context-aware narrative generation with semantic search.
+
+### Core Components
+
+**RAGManager** (`engine/rag.py:9-128`) orchestrates all vector operations:
+- Persistent disk-based ChromaDB client
+- SentenceTransformer embeddings (all-MiniLM-L6-v2)
+- Separate collections for lore and memory
+- HNSW indexing with cosine similarity
+
+## Initialization
+
+The RAG system initializes on engine startup with automatic directory creation:
+
+```python
+from engine.rag import rag_manager
+
+# Singleton instance with default path
+rag_manager = RagManager(db_path="./chroma_db")
+```
+
+### Embedding Model
+
+Flower uses **all-MiniLM-L6-v2** from sentence-transformers:
+- 384-dimensional embeddings
+- Fast CPU inference (~50ms per query)
+- Optimized for semantic similarity tasks
+- Installed automatically via `requirements.txt:7`
+
+```python
+self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+    model_name="all-MiniLM-L6-v2"
+)
+```
+
+## Collection Architecture
+
+### World Lore Collection
+
+Stores static world knowledge chunked for context efficiency:
+
+```python
+@property
+def collection(self) -> Collection:
+    if self._collection is None:
+        self._collection = self.client.get_or_create_collection(
+            name="world_lore",
+            embedding_function=self.embedding_function,
+            metadata={"hnsw:space": "cosine"}
+        )
+    return self._collection
+```
+
+**Lore Chunking Strategy** (`engine/main.py:41-59`):
+- Maximum chunk size: 800 characters
+- Line-aware splitting (preserves paragraph integrity)
+- Automatic chunking on world asset load
+
+```python
+# Lore is split into 800-char chunks during startup
+if w.lore:
+    chunks = []
+    current_chunk = ""
+    chunk_size = 800
+    
+    for line in w.lore.split('\n'):
+        if len(current_chunk) + len(line) > chunk_size and current_chunk:
+            chunks.append(current_chunk.strip())
+            current_chunk = line + '\n'
+        else:
+            current_chunk += line + '\n'
+    
+    # Add each chunk to RAG with unique ID
+    for i, chunk in enumerate(chunks):
+        rag_manager.add_lore(w.id, f"base_lore_{i}", chunk)
+```
+
+### Session Memory Collection
+
+Stores recent conversation exchanges for context continuity:
+
+```python
+@property
+def memory_collection(self) -> Collection:
+    if self._memory_collection is None:
+        self._memory_collection = self.client.get_or_create_collection(
+            name="session_memory",
+            embedding_function=self.embedding_function,
+            metadata={"hnsw:space": "cosine"}
+        )
+    return self._memory_collection
+```
+
+## Adding Documents
+
+### Lore Insertion
+
+World-scoped documents with automatic world_id tagging:
+
+```python
+def add_lore(self, world_id: str, lore_id: str, text: str, metadata: Dict[str, Any] = None):
+    """Add a document to the lore collection for a specific world."""
+    meta = metadata or {}
+    meta["world_id"] = world_id  # Ensures world filtering
+    
+    self.collection.upsert(
+        ids=[f"{world_id}_{lore_id}"],
+        documents=[text],
+        metadatas=[meta]
+    )
+```
+
+**Usage:**
+```python
+rag_manager.add_lore(
+    world_id="crimson_peaks",
+    lore_id="mountain_lore_1",
+    text="The Crimson Peaks were forged in dragon fire...",
+    metadata={"category": "geography"}
+)
+```
+
+### Memory Insertion
+
+Session-scoped conversation pairs stored after each AI response:
+
+```python
+def add_memory(self, session_id: str, memory_id: str, text: str):
+    """Add a recent exchange to the session memory collection."""
+    self.memory_collection.upsert(
+        ids=[f"{session_id}_{memory_id}"],
+        documents=[text],
+        metadatas=[{"session_id": session_id}]
+    )
+```
+
+**Real Implementation** (`engine/llm.py:244-247`):
+```python
+memory_key = f"{char_id}_{session_id}" if session_id else char_id
+rag_manager.add_memory(
+    memory_key, 
+    str(uuid.uuid4()), 
+    f"User: {prompt}\nAI: {full_content}"
+)
+```
+
+## Querying with Semantic Search
+
+### Lore Retrieval
+
+Filtered by world ID with context window protection:
+
+```python
+def query_lore(self, world_id: str, query: str, n_results: int = 3, max_chars: int = 1000) -> Tuple[List[str], bool]:
+    """Query lore specifically for the given world. Returns (results, context_warning)."""
+    try:
+        results = self.collection.query(
+            query_texts=[query],
+            n_results=n_results,
+            where={"world_id": world_id}  # World-scoped filter
+        )
+        
+        if results["documents"] and results["documents"][0]:
+            docs = results["documents"][0]
+            
+            # Check for context window bloat
+            total_chars = sum(len(d) for d in docs)
+            context_warning = total_chars > max_chars
+            
+            return docs, context_warning
+        return [], False
+    except Exception as e:
+        log.error(f"Error querying lore: {e}")
+        return [], False
+```
+
+**Production Usage** (`engine/main.py:197-199`):
+```python
+# Retrieve 2 most relevant lore chunks
+lore_list, _ = rag_manager.query_lore(
+    state.ACTIVE_WORLD_ID, prompt, n_results=2
+)
+```
+
+### Memory Retrieval
+
+Session-scoped with larger context allowance:
+
+```python
+def query_memory(self, session_id: str, query: str, n_results: int = 3, max_chars: int = 1500) -> Tuple[List[str], bool]:
+    """Query memory for the given session. Returns (results, context_warning)."""
+    try:
+        results = self.memory_collection.query(
+            query_texts=[query],
+            n_results=n_results,
+            where={"session_id": session_id}
+        )
+        
+        if results["documents"] and results["documents"][0]:
+            docs = results["documents"][0]
+            total_chars = sum(len(d) for d in docs)
+            context_warning = total_chars > max_chars
+            return docs, context_warning
+        return [], False
+    except Exception as e:
+        log.error(f"Error querying memory: {e}")
+        return [], False
+```
+
+**Production Usage** (`engine/main.py:200-201`):
+```python
+mem_key = f"{state.ACTIVE_CHARACTER_ID}_{state.ACTIVE_SESSION_ID}"
+mem_list, _ = rag_manager.query_memory(mem_key, prompt, n_results=3)
+```
+
+## Context Integration Pipeline
+
+The RAG system feeds into the LLM prompt construction:
+
+```python
+# 1. Query both collections (engine/main.py:197-201)
+lore_list, _ = rag_manager.query_lore(state.ACTIVE_WORLD_ID, prompt, n_results=2)
+mem_key = f"{state.ACTIVE_CHARACTER_ID}_{state.ACTIVE_SESSION_ID}"
+mem_list, _ = rag_manager.query_memory(mem_key, prompt, n_results=3)
+
+# 2. Build context string (engine/main.py:217-219)
+full_context = (
+    f"--- RECENT MEMORY ---\n{chr(10).join(mem_list)}" if mem_list else ""
+)
+
+# 3. Pass to LLM streaming (engine/main.py:223-230)
+stream_chat_response(
+    websocket,
+    prompt,
+    full_context,  # Memory injected here
+    state.ACTIVE_WORLD_ID,
+    state.ACTIVE_CHARACTER_ID,
+    state.ACTIVE_SESSION_ID
+)
+```
+
+## Memory Management
+
+### Session Cleanup
+
+Physical deletion of embeddings when sessions end:
+
+```python
+def delete_session_memory(self, session_id: str):
+    """Physically delete all vector embeddings for a specific session."""
+    try:
+        self.memory_collection.delete(where={"session_id": session_id})
+    except Exception as e:
+        log.error(f"Failed to delete vector memory: {e}")
+```
+
+**Triggered via** `/session delete <id>` command.
+
+## Performance Characteristics
+
+### Embedding Speed
+- **Model Load**: ~2 seconds (first query only)
+- **Query Latency**: 30-50ms per search
+- **Batch Embedding**: ~100 docs/second
+
+### Storage
+- **Disk Usage**: ~1KB per document + embeddings
+- **Index Type**: HNSW (Hierarchical Navigable Small World)
+- **Similarity Metric**: Cosine distance
+
+### Context Limits
+- **Lore**: 1000 chars default (2 chunks × ~500 chars)
+- **Memory**: 1500 chars default (3 chunks × ~500 chars)
+- **Total RAG Context**: ~2500 chars typical
+
+## Debugging RAG Queries
+
+Full retrieval logging is enabled in production (`engine/main.py:203-214`):
+
+```python
+if lore_list:
+    log.info(f"\n=== RETRIEVED LORE ({len(lore_list)} chunks) ===")
+    for i, chunk in enumerate(lore_list):
+        log.info(f"[LORE {i+1}]\n{chunk}\n")
+    log.info(f"=== END LORE ===\n")
+
+if mem_list:
+    log.info(f"\n=== RETRIEVED MEMORY ({len(mem_list)} chunks) ===")
+    for i, chunk in enumerate(mem_list):
+        log.info(f"[MEMORY {i+1}]\n{chunk}\n")
+    log.info(f"=== END MEMORY ===\n")
+```
+
+Monitor logs to verify semantic matching quality.
+
+## Advanced Configuration
+
+### Custom Embedding Models
+
+Swap models by modifying `engine/rag.py:20`:
+
+```python
+# Options:
+# - "all-MiniLM-L6-v2" (default, 384 dim)
+# - "all-mpnet-base-v2" (768 dim, higher quality)
+# - "paraphrase-multilingual-MiniLM-L12-v2" (multilingual)
+
+model_name = "all-mpnet-base-v2"
+self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+    model_name=model_name
+)
+```
+
+<Warning>
+  Changing embedding models requires deleting `chroma_db/` and re-indexing all content.
+</Warning>
+
+### Database Path
+
+Configure storage location via `config.yaml:6`:
+
+```yaml
+database_path: "./chroma_db"  # Relative to project root
+```
+
+Or pass directly:
+```python
+rag_manager = RagManager(db_path="/custom/path/chroma_db")
+```
+
+## Collection Inspection
+
+Query collection metadata programmatically:
+
+```python
+# Check collection size
+count = rag_manager.collection.count()
+print(f"Total lore documents: {count}")
+
+# Peek at all documents (development only)
+results = rag_manager.collection.peek(limit=10)
+for doc, meta in zip(results["documents"], results["metadatas"]):
+    print(f"World: {meta['world_id']}")
+    print(f"Content: {doc[:100]}...\n")
+```
+
+## Best Practices
+
+1. **Chunk Wisely**: 800 chars balances context and granularity
+2. **Filter Aggressively**: Always use `where` clauses to scope queries
+3. **Monitor Context**: Watch for `context_warning` flags
+4. **Clean Sessions**: Delete old session memory to reduce index bloat
+5. **Log Retrievals**: Keep RAG logging enabled during development
+
+## Common Issues
+
+### "No lore retrieved"
+- Verify world has lore in `assets/worlds/<world>.yaml`
+- Check world ID matches: `world_id` in metadata
+- Inspect ChromaDB with `collection.peek()`
+
+### "Memory not persisting"
+- Ensure `session_id` is consistent across requests
+- Memory is added AFTER AI response completes
+- Check `chroma_db/` directory permissions
+
+### "Slow first query"
+- SentenceTransformer downloads model on first use
+- Subsequent queries use cached model
+- Pre-warm with dummy query: `rag_manager.query_lore("test", "test")`

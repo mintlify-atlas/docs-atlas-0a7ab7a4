@@ -1,0 +1,576 @@
+---
+title: "rag.py"
+description: "RAG (Retrieval-Augmented Generation) manager using ChromaDB for semantic search"
+---
+
+## Overview
+
+Implements semantic search over world lore and conversation memory using ChromaDB vector database with sentence-transformers embeddings. Enables context-aware retrieval of relevant information during chat.
+
+## RagManager Class
+
+### Initialization
+
+```python
+class RagManager:
+    def __init__(self, db_path: str = "./chroma_db"):
+        self.db_path = db_path
+        
+        # Ensure directory exists
+        os.makedirs(db_path, exist_ok=True)
+        
+        # Persistent client stores data to disk
+        self.client = chromadb.PersistentClient(path=db_path)
+        
+        # Use sentence-transformers for local embeddings
+        model_name = "all-MiniLM-L6-v2"
+        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=model_name
+        )
+```
+
+<ParamField path="db_path" type="string">
+  Path to ChromaDB persistent storage directory (default: `"./chroma_db"`)
+</ParamField>
+
+**Embedding Model**: `all-MiniLM-L6-v2`
+- 384-dimensional embeddings
+- Fast inference (local, no API calls)
+- Good balance of speed and quality
+- 22.3M parameters
+
+### Collections
+
+#### Lore Collection
+
+```python
+@property
+def collection(self) -> Collection:
+    if self._collection is None:
+        self._collection = self.client.get_or_create_collection(
+            name="world_lore",
+            embedding_function=self.embedding_function,
+            metadata={"hnsw:space": "cosine"}
+        )
+    return self._collection
+```
+
+Stores world lore chunks for semantic retrieval.
+
+<ParamField path="name" type="string">
+  Collection name: `"world_lore"`
+</ParamField>
+
+<ParamField path="embedding_function" type="EmbeddingFunction">
+  SentenceTransformer model for generating embeddings
+</ParamField>
+
+<ParamField path="metadata.hnsw:space" type="string">
+  Distance metric: `"cosine"` (measures similarity between vectors)
+</ParamField>
+
+#### Memory Collection
+
+```python
+@property
+def memory_collection(self) -> Collection:
+    if self._memory_collection is None:
+        self._memory_collection = self.client.get_or_create_collection(
+            name="session_memory",
+            embedding_function=self.embedding_function,
+            metadata={"hnsw:space": "cosine"}
+        )
+    return self._memory_collection
+```
+
+Stores conversation history for episodic memory retrieval.
+
+## Lore Management
+
+### `add_lore()`
+
+```python
+def add_lore(
+    self, world_id: str, lore_id: str, text: str, metadata: Dict[str, Any] = None
+)
+```
+
+Adds a lore chunk to the vector database.
+
+<ParamField path="world_id" type="string" required>
+  World identifier (used for filtering queries)
+</ParamField>
+
+<ParamField path="lore_id" type="string" required>
+  Unique identifier for this lore chunk (e.g., `"base_lore_0"`, `uuid.uuid4()`)
+</ParamField>
+
+<ParamField path="text" type="string" required>
+  Lore content to embed and store
+</ParamField>
+
+<ParamField path="metadata" type="Dict[str, Any]">
+  Optional metadata (automatically includes `world_id`)
+</ParamField>
+
+**Example**
+```python
+rag_manager.add_lore(
+    world_id="fantasy",
+    lore_id="ruins_001",
+    text="The ancient ruins of Kal'dara hold secrets from the First Age. Only the bravest adventurers dare explore their cursed halls.",
+    metadata={"category": "locations", "importance": "high"}
+)
+```
+
+**Implementation**
+```python
+meta = metadata or {}
+meta["world_id"] = world_id  # Ensure world filtering works
+
+self.collection.upsert(
+    ids=[f"{world_id}_{lore_id}"],
+    documents=[text],
+    metadatas=[meta]
+)
+```
+
+### `query_lore()`
+
+```python
+def query_lore(
+    self, world_id: str, query: str, n_results: int = 3, max_chars: int = 1000
+) -> Tuple[List[str], bool]
+```
+
+Retrieve most relevant lore chunks for a query.
+
+<ParamField path="world_id" type="string" required>
+  World ID to filter results (only returns lore from this world)
+</ParamField>
+
+<ParamField path="query" type="string" required>
+  User's question or message (used for semantic search)
+</ParamField>
+
+<ParamField path="n_results" type="int">
+  Maximum number of chunks to retrieve (default: 3)
+</ParamField>
+
+<ParamField path="max_chars" type="int">
+  Character limit for context window warning (default: 1000)
+</ParamField>
+
+<ResponseField name="results" type="List[str]">
+  List of relevant lore text chunks, ordered by relevance
+</ResponseField>
+
+<ResponseField name="context_warning" type="bool">
+  `True` if total characters exceed `max_chars` (potential context bloat)
+</ResponseField>
+
+**Example**
+```python
+lore_chunks, warning = rag_manager.query_lore(
+    world_id="fantasy",
+    query="Tell me about the ancient ruins",
+    n_results=2
+)
+
+if warning:
+    print("Warning: Retrieved context is large")
+
+for chunk in lore_chunks:
+    print(f"Lore: {chunk}")
+```
+
+**Implementation**
+```python
+results = self.collection.query(
+    query_texts=[query],
+    n_results=n_results,
+    where={"world_id": world_id}  # Filter by world ID
+)
+
+if results["documents"] and results["documents"][0]:
+    docs = results["documents"][0]
+    
+    # Check for context window bloat
+    total_chars = sum(len(d) for d in docs)
+    context_warning = total_chars > max_chars
+    
+    return docs, context_warning
+return [], False
+```
+
+## Memory Management
+
+### `add_memory()`
+
+```python
+def add_memory(self, session_id: str, memory_id: str, text: str)
+```
+
+Stores a conversation exchange in vector memory.
+
+<ParamField path="session_id" type="string" required>
+  Session identifier (format: `f"{character_id}_{session_id}"`)
+</ParamField>
+
+<ParamField path="memory_id" type="string" required>
+  Unique identifier for this memory (typically `uuid.uuid4()`)
+</ParamField>
+
+<ParamField path="text" type="string" required>
+  Formatted conversation exchange (e.g., `"User: [question]\nAI: [response]"`)
+</ParamField>
+
+**Example**
+```python
+import uuid
+
+memory_key = f"elara_a1b2c3d4e5f6"
+rag_manager.add_memory(
+    session_id=memory_key,
+    memory_id=str(uuid.uuid4()),
+    text="User: What happened in the forest?\nAI: You discovered ancient markings on the trees, suggesting this place was once sacred."
+)
+```
+
+**Implementation**
+```python
+self.memory_collection.upsert(
+    ids=[f"{session_id}_{memory_id}"],
+    documents=[text],
+    metadatas=[{"session_id": session_id}]
+)
+```
+
+### `query_memory()`
+
+```python
+def query_memory(
+    self, session_id: str, query: str, n_results: int = 3, max_chars: int = 1500
+) -> Tuple[List[str], bool]
+```
+
+Retrieve relevant conversation history from memory.
+
+<ParamField path="session_id" type="string" required>
+  Session identifier to filter results
+</ParamField>
+
+<ParamField path="query" type="string" required>
+  Current user message (used for semantic search)
+</ParamField>
+
+<ParamField path="n_results" type="int">
+  Maximum number of memory chunks to retrieve (default: 3)
+</ParamField>
+
+<ParamField path="max_chars" type="int">
+  Character limit for context window warning (default: 1500)
+</ParamField>
+
+<ResponseField name="results" type="List[str]">
+  List of relevant conversation exchanges, ordered by relevance
+</ResponseField>
+
+<ResponseField name="context_warning" type="bool">
+  `True` if total characters exceed `max_chars`
+</ResponseField>
+
+**Example**
+```python
+memory_key = f"elara_a1b2c3d4e5f6"
+memories, warning = rag_manager.query_memory(
+    session_id=memory_key,
+    query="What did we discuss about magic?",
+    n_results=3
+)
+
+for memory in memories:
+    print(f"Memory: {memory}")
+```
+
+**Implementation**
+```python
+results = self.memory_collection.query(
+    query_texts=[query],
+    n_results=n_results,
+    where={"session_id": session_id}
+)
+
+if results["documents"] and results["documents"][0]:
+    docs = results["documents"][0]
+    total_chars = sum(len(d) for d in docs)
+    context_warning = total_chars > max_chars
+    return docs, context_warning
+return [], False
+```
+
+### `delete_session_memory()`
+
+```python
+def delete_session_memory(self, session_id: str)
+```
+
+Permanently deletes all vector embeddings for a session.
+
+<ParamField path="session_id" type="string" required>
+  Session identifier whose memory should be deleted
+</ParamField>
+
+**Example**
+```python
+memory_key = f"elara_a1b2c3d4e5f6"
+rag_manager.delete_session_memory(memory_key)
+```
+
+**Implementation**
+```python
+self.memory_collection.delete(where={"session_id": session_id})
+```
+
+<Warning>
+This operation is irreversible. All conversation embeddings for the session will be permanently deleted.
+</Warning>
+
+## Global Instance
+
+```python
+rag_manager = RagManager()
+```
+
+Singleton-like instance created on module import.
+
+**Usage**
+```python
+from engine.rag import rag_manager
+
+# Use directly
+rag_manager.add_lore("fantasy", "lore_001", "Ancient lore text...")
+```
+
+## Usage in Main Flow
+
+### Startup Lore Loading
+
+In `engine/main.py:startup()`:
+
+```python
+for data in load_yaml_assets("assets/worlds/*.yaml"):
+    w = World(...)
+    world_manager.add_world(w)
+    
+    # Split large lore into chunks
+    if w.lore:
+        chunks = []
+        current_chunk = ""
+        chunk_size = 800
+        
+        for line in w.lore.split('\n'):
+            if len(current_chunk) + len(line) > chunk_size and current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = line + '\n'
+            else:
+                current_chunk += line + '\n'
+        
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+        
+        # Add each chunk separately
+        for i, chunk in enumerate(chunks):
+            rag_manager.add_lore(w.id, f"base_lore_{i}", chunk)
+```
+
+### Chat Context Retrieval
+
+In `engine/main.py:websocket_endpoint()`:
+
+```python
+# RAG retrieval
+lore_list, _ = rag_manager.query_lore(
+    state.ACTIVE_WORLD_ID, prompt, n_results=2
+)
+mem_key = f"{state.ACTIVE_CHARACTER_ID}_{state.ACTIVE_SESSION_ID}"
+mem_list, _ = rag_manager.query_memory(mem_key, prompt, n_results=3)
+
+# Log retrieved chunks
+if lore_list:
+    log.info(f"\n=== RETRIEVED LORE ({len(lore_list)} chunks) ===")
+    for i, chunk in enumerate(lore_list):
+        log.info(f"[LORE {i+1}]\n{chunk}\n")
+
+if mem_list:
+    log.info(f"\n=== RETRIEVED MEMORY ({len(mem_list)} chunks) ===")
+    for i, chunk in enumerate(mem_list):
+        log.info(f"[MEMORY {i+1}]\n{chunk}\n")
+
+# Build context
+full_context = (
+    f"--- RECENT MEMORY ---\n{chr(10).join(mem_list)}" if mem_list else ""
+)
+```
+
+### Memory Storage After Response
+
+In `engine/llm.py:stream_chat_response()`:
+
+```python
+if full_content:
+    memory_key = f"{char_id}_{session_id}" if session_id else char_id
+    rag_manager.add_memory(
+        memory_key, str(uuid.uuid4()), f"User: {prompt}\nAI: {full_content}"
+    )
+```
+
+## Complete Example
+
+```python
+import uuid
+from engine.rag import rag_manager
+
+# === LORE MANAGEMENT ===
+
+# Add world lore
+rag_manager.add_lore(
+    world_id="fantasy",
+    lore_id="location_001",
+    text="The Tower of Echoes stands at the edge of reality, where the veil between worlds is thinnest.",
+    metadata={"type": "location", "region": "borderlands"}
+)
+
+rag_manager.add_lore(
+    world_id="fantasy",
+    lore_id="history_001",
+    text="During the War of Shadows, the ancient mages sealed away forbidden knowledge in hidden vaults.",
+    metadata={"type": "history", "era": "ancient"}
+)
+
+# Query lore
+query = "Tell me about magical towers"
+lore_results, warning = rag_manager.query_lore(
+    world_id="fantasy",
+    query=query,
+    n_results=2
+)
+
+print(f"Query: {query}")
+print(f"Context Warning: {warning}")
+for i, chunk in enumerate(lore_results, 1):
+    print(f"\nLore {i}: {chunk}")
+
+# === MEMORY MANAGEMENT ===
+
+# Session setup
+char_id = "elara"
+session_id = "a1b2c3d4e5f6"
+memory_key = f"{char_id}_{session_id}"
+
+# Store conversation exchanges
+rag_manager.add_memory(
+    session_id=memory_key,
+    memory_id=str(uuid.uuid4()),
+    text="User: What's your background?\nAI: I'm a wandering scholar who studies ancient magic and forgotten histories."
+)
+
+rag_manager.add_memory(
+    session_id=memory_key,
+    memory_id=str(uuid.uuid4()),
+    text="User: Have you been to the Tower of Echoes?\nAI: Yes, I've visited it once. The experience was... unsettling."
+)
+
+# Query memory
+query = "Have we talked about your travels?"
+memory_results, warning = rag_manager.query_memory(
+    session_id=memory_key,
+    query=query,
+    n_results=3
+)
+
+print(f"\nMemory Query: {query}")
+for i, memory in enumerate(memory_results, 1):
+    print(f"\nMemory {i}: {memory}")
+
+# === CLEANUP ===
+
+# Delete all session memory when done
+rag_manager.delete_session_memory(memory_key)
+print(f"\nDeleted all memory for session: {memory_key}")
+```
+
+## ChromaDB Details
+
+### Persistent Storage
+
+```python
+self.client = chromadb.PersistentClient(path=db_path)
+```
+
+Data is stored in `./chroma_db/` directory with the following structure:
+```
+chroma_db/
+├── chroma.sqlite3       # Metadata and document storage
+└── [collection_id]/     # Vector embeddings
+    └── data_level0.bin
+```
+
+### HNSW Index
+
+```python
+metadata={"hnsw:space": "cosine"}
+```
+
+- **Algorithm**: Hierarchical Navigable Small World (HNSW)
+- **Distance Metric**: Cosine similarity
+- **Performance**: O(log N) query time
+- **Trade-off**: Fast approximate search vs exact nearest neighbors
+
+### Embedding Dimensions
+
+- **Model**: `all-MiniLM-L6-v2`
+- **Dimensions**: 384
+- **Format**: Float32 array
+- **Size**: ~1.5KB per document
+
+## Performance Considerations
+
+### Chunk Size
+
+```python
+chunk_size = 800  # characters per chunk
+```
+
+Optimal for:
+- Semantic coherence
+- Embedding quality
+- Context window efficiency
+
+### Query Limits
+
+Recommended `n_results` values:
+- **Lore**: 2-3 chunks (focused, relevant context)
+- **Memory**: 3-5 chunks (recent conversation history)
+
+### Context Window Management
+
+```python
+max_chars = 1000  # for lore
+max_chars = 1500  # for memory
+```
+
+Warnings help prevent token limit issues with LLMs.
+
+## Error Handling
+
+```python
+try:
+    results = self.collection.query(...)
+    # ...
+except Exception as e:
+    log.error(f"Error querying lore: {e}")
+    return [], False
+```
+
+All query methods return empty results on error, allowing graceful degradation.

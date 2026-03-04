@@ -1,0 +1,166 @@
+---
+title: "/model Command"
+description: "Hot-swap AI models during runtime"
+---
+
+## Overview
+
+The `/model` command allows you to switch between different AI models without restarting the engine. This enables you to experiment with different models mid-session or optimize for specific use cases.
+
+## Syntax
+
+```bash
+/model <model_id>
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `model_id` | string | Yes | The identifier of the model to activate |
+
+## Behavior
+
+When you execute `/model`:
+
+1. The engine validates that `model_id` exists in `state.AVAILABLE_MODELS`
+2. If valid, updates `state.CURRENT_MODEL` to the new model
+3. Sets `state.MODEL_CONFIRMED` to `True`
+4. Persists the change to disk via `state.save_state()`
+5. Sends a system update confirming the model change
+
+<Info>
+The model change is immediate and affects all subsequent AI responses in the current and future sessions.
+</Info>
+
+## Examples
+
+### Switch to Claude Sonnet
+
+```bash
+/model claude-sonnet-4-20250514
+```
+
+**Expected Output:**
+```
+Hot-swapped model to claude-sonnet-4-20250514
+```
+
+### Switch to GPT-4
+
+```bash
+/model gpt-4-turbo
+```
+
+**Expected Output:**
+```
+Hot-swapped model to gpt-4-turbo
+```
+
+### Invalid Model
+
+```bash
+/model nonexistent-model
+```
+
+**Expected Output:**
+```
+Error: nonexistent-model is not recognized.
+```
+
+## Available Models
+
+The available models are defined in the engine's state configuration. Common models include:
+
+- `claude-sonnet-4-20250514` - Anthropic Claude Sonnet (latest)
+- `claude-opus-4-20250514` - Anthropic Claude Opus
+- `gpt-4-turbo` - OpenAI GPT-4 Turbo
+- `gpt-4o` - OpenAI GPT-4 Optimized
+
+<Tip>
+To see the complete list of available models, check your engine configuration or the models API endpoint.
+</Tip>
+
+## WebSocket Response
+
+The engine sends a `system_update` event with the following payload:
+
+```json
+{
+  "event": "system_update",
+  "payload": {
+    "content": "Hot-swapped model to claude-sonnet-4-20250514",
+    "metadata": {
+      "model": "claude-sonnet-4-20250514",
+      "model_confirmed": true
+    }
+  }
+}
+```
+
+## Source Code Reference
+
+The `/model` command is implemented in `engine/commands.py:23-41`:
+
+```python
+if cmd == "/model" and len(parts) >= 2:
+    new_model = parts[1]
+    if any(m["id"] == new_model for m in state.AVAILABLE_MODELS):
+        state.CURRENT_MODEL = new_model
+        state.MODEL_CONFIRMED = True
+        state.save_state()
+        await websocket.send_text(
+            build_ws_payload(
+                "system_update",
+                f"Hot-swapped model to {state.CURRENT_MODEL}",
+                {"model": state.CURRENT_MODEL, "model_confirmed": True},
+            )
+        )
+    else:
+        await websocket.send_text(
+            build_ws_payload(
+                "system_update", f"Error: {new_model} is not recognized."
+            )
+        )
+```
+
+## Use Cases
+
+### Performance Optimization
+
+Switch to faster models for quick interactions:
+
+```bash
+/model gpt-4o
+```
+
+### Quality Enhancement
+
+Switch to more capable models for complex storytelling:
+
+```bash
+/model claude-opus-4-20250514
+```
+
+### Cost Management
+
+Switch to more economical models when appropriate:
+
+```bash
+/model gpt-4-turbo
+```
+
+## Common Issues
+
+<Warning>
+**Model not recognized**: Ensure the model ID exactly matches one from `AVAILABLE_MODELS`. Model IDs are case-sensitive.
+</Warning>
+
+<Warning>
+**Missing parameter**: The command requires exactly one parameter. `/model` without arguments will be ignored.
+</Warning>
+
+## Related
+
+- [Session Commands](/commands/session) - New sessions inherit the current model
+- [Configuration](/configuration/models) - Configure available models

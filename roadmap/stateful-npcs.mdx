@@ -1,0 +1,423 @@
+---
+title: "Stateful NPCs & Factions"
+description: "Planned system for persistent NPC relationships and faction standing"
+---
+
+<Info>
+This is a planned feature for Phase 2 of the Flower Engine roadmap. Implementation details may change during development.
+</Info>
+
+## Overview
+
+The stateful NPC system will enable persistent characters and factions that remember interactions across sessions. NPCs will maintain consistent personalities, relationships, and standing values that dynamically influence narrative outcomes and AI behavior.
+
+## Core Features
+
+### Relationship Tracking
+
+A comprehensive system for managing how NPCs and factions perceive the player:
+
+- **Numerical Standing**: Integer values representing relationship quality (-100 to +100)
+- **Multiple Dimensions**: Track trust, respect, fear, affection separately
+- **Historical Context**: Record of significant interactions that shaped the relationship
+- **Dynamic Adjustment**: Standing changes based on player actions and dialogue choices
+- **Threshold Triggers**: Special events or dialogue options unlock at certain standing levels
+
+### Persistent NPCs
+
+NPCs will maintain continuity across different sessions and story arcs:
+
+- **Registration System**: Formally register recurring NPCs with unique identifiers
+- **Core Attributes**: Name, description, personality traits, motivations
+- **Memory Retention**: NPCs remember past conversations and events
+- **State Tracking**: Current location, emotional state, ongoing goals
+- **Consistency Enforcement**: AI must respect established NPC characteristics
+
+### Dynamic Standing Injection
+
+Relevant relationship data automatically enhances AI context:
+
+- **Scene Analysis**: Detect which NPCs are present in the current scene
+- **Context Injection**: Insert relationship data into system prompt
+- **Behavioral Modulation**: AI adapts NPC dialogue based on standing
+- **Faction Influence**: Group affiliations affect individual NPC behavior
+- **Conflict Resolution**: Handle competing loyalties and faction tensions
+
+## Data Structure
+
+### NPC Registry
+
+Core information stored for each registered NPC:
+
+```json
+{
+  "id": "merchant_aldric",
+  "name": "Aldric the Merchant",
+  "faction": "traders_guild",
+  "archetype": "greedy_shopkeeper",
+  "personality_traits": [
+    "cautious",
+    "profit-motivated",
+    "secretly generous"
+  ],
+  "goals": [
+    "Expand trading network",
+    "Protect family legacy"
+  ],
+  "current_location": "marketplace_stall",
+  "first_appearance": "2026-03-01T14:30:00Z",
+  "interaction_count": 12
+}
+```
+
+### Relationship Values
+
+Multi-dimensional relationship tracking:
+
+```json
+{
+  "npc_id": "merchant_aldric",
+  "player_id": "default_player",
+  "standing": {
+    "trust": 35,
+    "respect": 50,
+    "fear": 10,
+    "affection": 20
+  },
+  "last_interaction": "2026-03-04T10:15:00Z",
+  "total_standing": 60,
+  "relationship_status": "friendly"
+}
+```
+
+### Faction System
+
+Group-level relationships that influence member NPCs:
+
+```json
+{
+  "id": "traders_guild",
+  "name": "Trader's Guild",
+  "description": "Merchant coalition controlling trade routes",
+  "alignment": "neutral",
+  "power_level": 7,
+  "player_standing": 45,
+  "rival_factions": ["thieves_guild", "city_guard"],
+  "allied_factions": ["craftsmen_union"],
+  "influence_zones": ["marketplace", "docks", "trade_road"]
+}
+```
+
+## Database Schema
+
+### NPCs Table
+
+```sql
+CREATE TABLE npcs (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  faction_id TEXT,
+  archetype TEXT,
+  personality_traits TEXT,  -- JSON array
+  goals TEXT,               -- JSON array
+  current_location TEXT,
+  emotional_state TEXT,
+  first_seen INTEGER,
+  last_seen INTEGER,
+  interaction_count INTEGER DEFAULT 0,
+  notes TEXT,
+  FOREIGN KEY (faction_id) REFERENCES factions(id)
+);
+```
+
+### Relationships Table
+
+```sql
+CREATE TABLE relationships (
+  id INTEGER PRIMARY KEY,
+  npc_id TEXT NOT NULL,
+  player_id TEXT NOT NULL,
+  trust INTEGER DEFAULT 0,
+  respect INTEGER DEFAULT 0,
+  fear INTEGER DEFAULT 0,
+  affection INTEGER DEFAULT 0,
+  total_standing INTEGER DEFAULT 0,
+  last_interaction INTEGER,
+  interaction_history TEXT,  -- JSON array of events
+  FOREIGN KEY (npc_id) REFERENCES npcs(id),
+  UNIQUE(npc_id, player_id)
+);
+```
+
+### Factions Table
+
+```sql
+CREATE TABLE factions (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  alignment TEXT,
+  power_level INTEGER DEFAULT 5,
+  player_standing INTEGER DEFAULT 0,
+  rival_factions TEXT,      -- JSON array
+  allied_factions TEXT,     -- JSON array
+  influence_zones TEXT,     -- JSON array
+  reputation_description TEXT
+);
+```
+
+### Interaction History Table
+
+```sql
+CREATE TABLE npc_interactions (
+  id INTEGER PRIMARY KEY,
+  npc_id TEXT NOT NULL,
+  player_id TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  location TEXT,
+  summary TEXT,
+  standing_change INTEGER,
+  significant BOOLEAN DEFAULT 0,
+  FOREIGN KEY (npc_id) REFERENCES npcs(id)
+);
+```
+
+## Implementation Details
+
+### Registration Command
+
+Players or the system can register NPCs:
+
+```bash
+/register_npc [name] [archetype]
+```
+
+Automatic registration triggers:
+- NPC appears in 3+ consecutive messages
+- NPC is named by the player
+- AI indicates NPC is important (via hidden flag)
+
+### Standing Calculation
+
+Total standing is calculated as:
+
+```
+Total Standing = (Trust × 0.4) + (Respect × 0.3) + (Affection × 0.3) - (Fear × 0.2)
+```
+
+Relationship status tiers:
+
+| Total Standing | Status | Description |
+|----------------|--------|-------------|
+| 80-100 | Devoted | Unwavering loyalty and support |
+| 60-79 | Friendly | Positive relationship, willing to help |
+| 30-59 | Neutral-Positive | Cordial but cautious |
+| 0-29 | Neutral | Indifferent, transactional |
+| -29 to -1 | Neutral-Negative | Distrustful, unhelpful |
+| -59 to -30 | Hostile | Actively oppositional |
+| -100 to -60 | Enemy | Seeks to harm or sabotage |
+
+### Context Injection
+
+When an NPC appears in a scene, inject into system prompt:
+
+```
+[NPC CONTEXT]
+NPC: Aldric the Merchant (Trader's Guild member)
+Relationship Status: Friendly (Trust: 35, Respect: 50)
+Last Interaction: You helped him recover stolen goods (3 days ago)
+Current Disposition: Grateful but still cautious about personal matters
+Faction Standing: Trader's Guild (45/100 - Respected Outsider)
+```
+
+### Standing Modification
+
+Actions automatically adjust standing:
+
+**Positive Actions:**
+- Complete a quest for the NPC: +10-25
+- Give a gift: +5-15 (based on value/thoughtfulness)
+- Defend from threat: +15-30
+- Share valuable information: +5-10
+- Support their goals: +10-20
+
+**Negative Actions:**
+- Betray trust: -30-50
+- Steal from them: -20-40
+- Harm their allies: -15-25
+- Insult or threaten: -10-20
+- Fail a promised task: -10-15
+
+## Use Cases
+
+### Merchant Reputation
+
+Build standing with a shopkeeper over time:
+
+1. **First Meeting (0)**: Standard prices, limited inventory
+2. **Regular Customer (30)**: 5% discount, occasional rumors shared
+3. **Trusted Patron (60)**: 15% discount, access to rare items, side quests
+4. **Close Friend (85)**: Special items at cost, insider information, personal favors
+
+### Faction Conflicts
+
+Navigate competing loyalties:
+
+- High standing with City Guard (+70)
+- Low standing with Thieves Guild (-40)
+- Helping thieves lowers guard standing
+- Betraying thieves risks revenge attack
+- Must balance relationships or commit to one side
+
+### Romantic Relationships
+
+Slow-burn relationship progression:
+
+1. **Strangers (0)**: Formal, distant interactions
+2. **Acquaintances (25)**: Small talk, basic kindness
+3. **Friends (50)**: Personal conversations, trust building
+4. **Close Friends (75)**: Deep discussions, emotional support
+5. **Romantic Interest (90+)**: Special dialogue options, relationship events
+
+### NPC Memory Callbacks
+
+NPCs reference past interactions:
+
+```
+Player enters tavern after 10 sessions away.
+
+Bartender: "Well, well. Haven't seen you since you dealt with 
+that bandit problem. Still carrying that enchanted blade you 
+won? Drink's on the house for old times' sake."
+```
+
+## Technical Architecture
+
+### Backend Components
+
+**New File**: `engine/npcs.py`
+- `register_npc()`: Add NPC to persistent registry
+- `update_standing()`: Modify relationship values
+- `get_npc_context()`: Generate context injection for AI
+- `calculate_faction_impact()`: Apply group standing to individual NPCs
+- `detect_scene_npcs()`: Identify NPCs mentioned in current context
+
+**New File**: `engine/factions.py`
+- `register_faction()`: Create new faction
+- `update_faction_standing()`: Adjust player reputation
+- `get_faction_members()`: List NPCs affiliated with faction
+- `calculate_faction_conflicts()`: Determine relationship consequences
+
+### WebSocket Events
+
+New events for NPC system:
+
+```json
+{
+  "event": "npc_registered",
+  "payload": {
+    "npc_id": "merchant_aldric",
+    "name": "Aldric the Merchant",
+    "standing": 0
+  }
+}
+```
+
+```json
+{
+  "event": "standing_changed",
+  "payload": {
+    "npc_id": "merchant_aldric",
+    "change": 15,
+    "new_standing": 60,
+    "reason": "Completed delivery quest"
+  }
+}
+```
+
+### Commands
+
+**Player Commands:**
+```bash
+/npcs                  # List all registered NPCs
+/npc [name]           # View details for specific NPC
+/factions             # List all known factions
+/faction [name]       # View faction details and standing
+/relationships        # Show relationship summary
+```
+
+**Admin Commands:**
+```bash
+/register_npc [name] [archetype]
+/set_standing [npc] [value]
+/create_faction [name]
+```
+
+## AI Integration
+
+### System Prompt Enhancements
+
+Add to AI instructions:
+
+```
+You must respect established NPC personalities and relationships.
+When NPCs appear in scenes, their behavior should reflect their
+current standing with the player:
+
+- Friendly NPCs (50+): Warm, helpful, offer assistance
+- Neutral NPCs (0-49): Professional, transactional
+- Hostile NPCs (-50 to -1): Cold, unhelpful, possibly antagonistic
+- Enemy NPCs (-100 to -51): Openly aggressive or sabotaging
+
+NPC memory is canon. If an NPC witnessed or heard about past events,
+they can reference them naturally in dialogue.
+```
+
+### Standing Triggers
+
+AI can trigger standing changes via special syntax:
+
+```
+[STANDING: merchant_aldric +15 "player returned stolen goods"]
+```
+
+Parser detects this and updates database automatically.
+
+## Configuration
+
+Settings in `config.yaml`:
+
+```yaml
+npc_system:
+  enabled: true
+  auto_register: true           # Automatically register recurring NPCs
+  auto_register_threshold: 3    # Appearances before auto-registration
+  show_standing_changes: true   # Notify player of standing shifts
+  faction_influence: 0.5        # How much faction standing affects member NPCs
+  memory_depth: 10              # Number of past interactions to include in context
+```
+
+## Future Enhancements
+
+Potential expansions beyond Phase 2:
+
+- **NPC Schedules**: Time-based location and availability
+- **NPC-to-NPC Relationships**: Complex social webs
+- **Reputation Propagation**: NPCs hear about player actions from others
+- **Dynamic Events**: NPCs initiate quests based on relationship level
+- **Emotional States**: Mood tracking that affects interactions
+- **NPC Portraits**: Visual representation in TUI
+- **Conversation History**: Full transcript of past dialogues
+- **Gift Preferences**: Learn what individual NPCs value
+
+## Design Philosophy
+
+The stateful NPC system is designed to:
+
+1. **Create Continuity**: Make the world feel alive and responsive
+2. **Reward Investment**: Relationship building yields tangible benefits
+3. **Enable Consequences**: Actions have lasting impact on social standing
+4. **Support Roleplay**: Provide hooks for character-driven storytelling
+5. **Maintain Complexity**: Allow for nuanced, multi-dimensional relationships
+
+By giving NPCs memory and persistence, Flower transforms from a series of isolated scenes into a living world where relationships matter and every interaction has weight.

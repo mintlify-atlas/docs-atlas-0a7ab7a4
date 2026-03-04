@@ -1,80 +1,274 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Get Flower Engine running in 5 minutes"
 ---
 
-## Get started in three steps
+## Get Started in Minutes
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+This guide will have you running your first Flower Engine session in under 5 minutes using our automated setup script.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **Prerequisites**: Make sure you have Python 3.12+, Rust & Cargo, and at least one API key ready (OpenRouter, Google Gemini, Groq, or DeepSeek).
 </Note>
+
+## Step 1: Clone and Setup
+
+Clone the repository and run the automated setup script:
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/ritz541/flower-engine.git
+    cd flower-engine
+    ```
+  </Step>
+
+  <Step title="Run the setup script">
+    The setup script will:
+    - Create a Python virtual environment
+    - Install CPU-optimized dependencies
+    - Copy example assets to `assets/`
+    - Create a `config.yaml` from the template
+    
+    ```bash
+    chmod +x setup.sh
+    ./setup.sh
+    ```
+    
+    <Tip>
+      The setup script installs PyTorch with CPU support to avoid 8GB CUDA downloads. This keeps setup fast and compatible with all systems.
+    </Tip>
+  </Step>
+</Steps>
+
+## Step 2: Configure API Keys
+
+Open `config.yaml` and add your API keys. You need at least one provider configured.
+
+<CodeGroup>
+```yaml config.yaml (OpenRouter)
+# OpenRouter - Recommended for widest model support
+openai_base_url: "https://openrouter.ai/api/v1"
+openai_api_key: "sk-or-v1-YOUR_OPENROUTER_KEY_HERE"
+
+default_model: "google/gemini-2.0-pro-exp-02-05:free"
+supported_models:
+  - "google/gemini-2.0-pro-exp-02-05:free"
+  - "openai/gpt-4o-mini"
+  - "anthropic/claude-3-haiku"
+```
+
+```yaml config.yaml (DeepSeek)
+# DeepSeek - Great for reasoning tasks
+deepseek_api_key: "sk-YOUR_DEEPSEEK_KEY_HERE"
+
+default_model: "deepseek-chat"
+supported_models:
+  - "deepseek-chat"
+  - "deepseek-reasoner"
+```
+
+```yaml config.yaml (Google Gemini)
+# Google Gemini - Direct API access
+gemini_api_key: "AIzaSy..."
+
+default_model: "gemini/gemini-3-flash-preview"
+supported_models:
+  - "gemini/gemini-3.1-pro-preview"
+  - "gemini/gemini-3-flash-preview"
+```
+
+```yaml config.yaml (Multiple Providers)
+# Use multiple providers and switch between them
+openai_base_url: "https://openrouter.ai/api/v1"
+openai_api_key: "sk-or-v1-YOUR_KEY"
+deepseek_api_key: "sk-YOUR_KEY"
+gemini_api_key: "AIzaSy..."
+
+default_model: "google/gemini-2.0-pro-exp-02-05:free"
+supported_models:
+  - "google/gemini-2.0-pro-exp-02-05:free"
+  - "deepseek-chat"
+  - "deepseek-reasoner"
+  - "openai/gpt-4o-mini"
+```
+</CodeGroup>
+
+<Warning>
+  Never commit `config.yaml` to version control. It's automatically gitignored to protect your API keys.
+</Warning>
+
+## Step 3: Launch Flower Engine
+
+Start the engine with the launch script:
+
+```bash
+./start.sh
+```
+
+The script will:
+1. Start the Python backend (FastAPI server on port 8000)
+2. Wait for the backend to be ready
+3. Launch the Rust TUI frontend
+
+You'll see the beautiful Flower Engine ASCII banner and enter the immersive terminal interface.
+
+<Tip>
+  The startup script uses `Ctrl+C` to gracefully shut down both the backend and frontend. Always exit this way to ensure clean shutdown.
+</Tip>
+
+## Step 4: Your First Session
+
+Once the TUI launches, you'll need to configure your session using slash commands:
+
+<Steps>
+  <Step title="Select a world">
+    ```bash
+    /world select example_world
+    ```
+    This loads the cyberpunk world from `assets/worlds/cyberpunk.yaml`.
+  </Step>
+
+  <Step title="Select a character">
+    ```bash
+    /character select example_char
+    ```
+    This loads the mercenary character from `assets/characters/mercenary.yaml`.
+  </Step>
+
+  <Step title="Create or load a session">
+    ```bash
+    /session new my_first_session
+    ```
+    This creates a new session. All your conversation history will be saved here.
+  </Step>
+
+  <Step title="(Optional) Add custom rules">
+    ```bash
+    /rules add gritty
+    ```
+    This applies the gritty realism rule from `assets/rules/gritty.yaml`.
+  </Step>
+</Steps>
+
+## Step 5: Start Roleplaying!
+
+Now you're ready to start your adventure. Simply type your actions and the AI narrator will respond:
+
+```
+You: I step out into the rain-soaked streets, pulling my coat tight against the cold.
+
+Narrator: The neon lights of the city reflect in the puddles at your feet. 
+A distant siren wails as you notice a shadowy figure watching you from 
+across the street...
+```
+
+<CardGroup cols={2}>
+  <Card title="Switch Models" icon="shuffle">
+    Use `/model <model_id>` to hot-swap LLM providers without restarting.
+  </Card>
+  
+  <Card title="Session Management" icon="save">
+    Use `/session list` to see all saved sessions and `/session load <name>` to resume.
+  </Card>
+  
+  <Card title="View History" icon="clock-rotate-left">
+    Use `/history` to see your complete conversation history.
+  </Card>
+  
+  <Card title="Cancel Generation" icon="stop">
+    Type `/cancel` while the AI is responding to stop generation.
+  </Card>
+</CardGroup>
+
+## Available Commands
+
+Here are the essential commands to get started:
+
+| Command | Description |
+|---------|-------------|
+| `/model <model_id>` | Switch to a different LLM model |
+| `/world select <id>` | Load a world from assets |
+| `/character select <id>` | Load a character from assets |
+| `/session new <name>` | Create a new session |
+| `/session load <name>` | Resume an existing session |
+| `/session list` | List all available sessions |
+| `/rules add <rule_id>` | Activate a custom rule |
+| `/rules clear` | Remove all active rules |
+| `/history` | View conversation history |
+| `/cancel` | Stop the current AI generation |
+
+<Note>
+  For a complete command reference, see [Commands Overview](/commands/overview).
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Create Custom Worlds" icon="globe" href="/guides/creating-worlds">
+    Learn how to build your own worlds with rich lore and custom system prompts.
+  </Card>
+  
+  <Card title="Design Characters" icon="user" href="/guides/creating-characters">
+    Create detailed character personas for different playstyles.
+  </Card>
+  
+  <Card title="Understand the Architecture" icon="diagram-project" href="/concepts/architecture">
+    Deep dive into how the split-brain system works.
+  </Card>
+  
+  <Card title="Configure RAG" icon="brain" href="/advanced/rag-system">
+    Optimize the vector database for better context retrieval.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Backend fails to start">
+    Check that port 8000 is available:
+    ```bash
+    lsof -i :8000
+    ```
+    
+    If another process is using it, kill it or change the port in `start.sh`:
+    ```bash
+    venv/bin/python -m uvicorn engine.main:app --host 0.0.0.0 --port 8001
+    ```
+  </Accordion>
+
+  <Accordion title="TUI won't connect">
+    Ensure the backend is running:
+    ```bash
+    curl http://127.0.0.1:8000/
+    ```
+    
+    You should see a response. If not, check the backend logs.
+  </Accordion>
+
+  <Accordion title="API key errors">
+    Verify your `config.yaml` has the correct API key format:
+    - OpenRouter: `sk-or-v1-...`
+    - DeepSeek: `sk-...`
+    - Gemini: `AIzaSy...`
+    
+    Test your keys with a simple curl:
+    ```bash
+    curl https://openrouter.ai/api/v1/models \
+      -H "Authorization: Bearer YOUR_KEY"
+    ```
+  </Accordion>
+
+  <Accordion title="Rust compilation errors">
+    Ensure you have the latest stable Rust:
+    ```bash
+    rustup update stable
+    ```
+    
+    If you're on an older system, you may need to update your C compiler.
+  </Accordion>
+</AccordionGroup>
+
+<Card title="Need more help?" icon="circle-question" href="/installation">
+  Check the full installation guide for detailed system requirements and advanced setup options.
+</Card>

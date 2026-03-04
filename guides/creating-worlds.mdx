@@ -1,0 +1,309 @@
+---
+title: Creating Worlds
+description: Design rich world assets with YAML configuration
+icon: globe
+---
+
+## Overview
+
+Worlds are the foundational settings for your roleplay sessions. Each world defines the lore, atmosphere, starting scenario, and system prompts that guide the AI's behavior.
+
+## World File Structure
+
+Worlds are defined as YAML files in the `assets/worlds/` directory. The engine automatically loads all `.yaml` files on startup.
+
+### Required Fields
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the world. Used in commands and database references.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Display name shown in the TUI world selector.
+</ParamField>
+
+<ParamField path="lore" type="string" required>
+  World background, history, and context. This is indexed in the RAG database for dynamic retrieval during conversations.
+</ParamField>
+
+### Optional Fields
+
+<ParamField path="start_message" type="string">
+  The first message shown when starting a new session. Sets the scene and provides initial context.
+</ParamField>
+
+<ParamField path="scene" type="string">
+  Current scene description. Can be used for dynamic context updates.
+</ParamField>
+
+<ParamField path="system_prompt" type="string">
+  Additional instructions for the AI that override or extend default behavior for this world.
+</ParamField>
+
+## Basic Example
+
+From `assets_example/worlds/cyberpunk.yaml`:
+
+```yaml
+id: "example_world"
+name: "Example Cyberpunk City"
+start_message: "The neon lights flicker as you step out into the rain-slicked alleyway. Welcome to the future."
+lore: "A high-tech, low-life metropolis ruled by rival corporations."
+```
+
+<Steps>
+  <Step title="Create the YAML file">
+    ```bash
+    touch assets/worlds/my_world.yaml
+    ```
+  </Step>
+
+  <Step title="Define the world structure">
+    Add required and optional fields with your content.
+  </Step>
+
+  <Step title="Restart the engine">
+    The engine loads world assets on startup:
+    ```bash
+    python -m engine.main
+    ```
+  </Step>
+
+  <Step title="Select your world">
+    In the TUI, use the world selector or command:
+    ```
+    /world select my_world
+    ```
+  </Step>
+</Steps>
+
+## Advanced Example
+
+```yaml cyberpunk_noir.yaml
+id: "cyberpunk_noir"
+name: "Neo-Tokyo 2077: Neon Shadows"
+
+start_message: |
+  Rain hammers against the taxi window as you weave through the vertical city.
+  Holographic advertisements flicker in a dozen languages, their glow reflecting
+  off the wet pavement below. Your destination: the Obsidian Tower, where secrets
+  and credits flow in equal measure.
+  
+  The cabbie glances at you through the rearview mirror. "First time in the
+  corporate sector?"
+
+lore: |
+  Neo-Tokyo 2077 is a vertical megacity of 50 million souls, divided into three
+  distinct zones:
+  
+  **The Heights**: Floors 80-200 where megacorporations rule. Clean air, private
+  security, and gene-modded executives who never see the ground.
+  
+  **The Midlevels**: Floors 20-79, the sprawling middle-class maze. Gray-market
+  clinics, noodle bars, and tech bazaars where most citizens live and die.
+  
+  **The Undercity**: Ground to floor 19. Forgotten factories, gang territories,
+  and those too poor or stubborn to climb higher. Sunlight never reaches here.
+  
+  Three megacorps dominate: Keiretsu (biotech), Nexus (AI and networks), and
+  Sovereign Arms (military contractors). Their shadow war plays out in corporate
+  espionage, hired mercenaries, and legal battles that reshape reality.
+  
+  Tech Level: Neural interfaces are common, cybernetic enhancement is routine but
+  expensive. True AI is regulated by the Global Tech Accords. Androids exist but
+  are restricted to service roles. Genetic modification has created a visible
+  divide between naturals and "optimized" humans.
+  
+  Recent Events: Six months ago, a data breach at Nexus exposed blackmail files
+  on 3,000 high-level targets. The fallout ignited a covert war between the corps.
+  Mercenaries, fixers, and hackers have never been more in demand.
+
+system_prompt: |
+  You are narrating a cyberpunk noir story. Emphasize:
+  - Moral ambiguity: there are no clear heroes or villains
+  - Atmospheric descriptions: neon, rain, smoke, shadows
+  - Corporate intrigue and power dynamics
+  - The contrast between high-tech advancement and human desperation
+  - Consequences matter: choices should have weight
+  
+  Keep the tone gritty and grounded. Avoid power fantasy scenarios.
+```
+
+<Note>
+Use the `|` (pipe) character for multi-line strings in YAML. This preserves newlines and formatting.
+</Note>
+
+## World Loading Process
+
+From `engine/main.py:29-38`:
+
+```python
+for data in load_yaml_assets("assets/worlds/*.yaml"):
+    w = World(
+        id=data["id"],
+        name=data["name"],
+        lore=data.get("lore", ""),
+        start_message=data.get("start_message", ""),
+        scene=data.get("scene", ""),
+        system_prompt=data.get("system_prompt", ""),
+    )
+    world_manager.add_world(w)
+```
+
+The engine:
+
+1. Scans `assets/worlds/*.yaml` for all world files
+2. Parses each YAML file into a `World` object
+3. Stores worlds in SQLite (`engine.db`)
+4. Chunks large lore text (800 characters per chunk)
+5. Indexes lore chunks in ChromaDB for RAG retrieval
+
+## RAG Integration
+
+World lore is automatically indexed for semantic search:
+
+```python
+# From engine/main.py:40-58
+if w.lore:
+    chunks = []
+    current_chunk = ""
+    chunk_size = 800  # chars per chunk
+    
+    for line in w.lore.split('\n'):
+        if len(current_chunk) + len(line) > chunk_size and current_chunk:
+            chunks.append(current_chunk.strip())
+            current_chunk = line + '\n'
+        else:
+            current_chunk += line + '\n'
+    
+    for i, chunk in enumerate(chunks):
+        rag_manager.add_lore(w.id, f"base_lore_{i}", chunk)
+```
+
+<Info>
+During conversations, the engine retrieves the top 2 most relevant lore chunks based on the user's message. This keeps context focused and reduces token usage.
+</Info>
+
+## Database Schema
+
+Worlds are stored in SQLite with this schema:
+
+```sql
+CREATE TABLE worlds (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    lore TEXT NOT NULL,
+    start_message TEXT NOT NULL DEFAULT '',
+    scene TEXT NOT NULL DEFAULT '',
+    system_prompt TEXT NOT NULL DEFAULT ''
+)
+```
+
+## Best Practices
+
+### Writing Effective Lore
+
+<AccordionGroup>
+  <Accordion title="Keep lore focused and relevant">
+    Write lore that will be useful during roleplay. Avoid excessive world-building that never comes up in conversation.
+  </Accordion>
+
+  <Accordion title="Structure lore in logical sections">
+    Organize by topic (geography, factions, tech level, recent events). This helps with RAG retrieval.
+  </Accordion>
+
+  <Accordion title="Include concrete details">
+    Instead of "advanced technology", write "neural interfaces allow direct brain-computer connection".
+  </Accordion>
+
+  <Accordion title="Balance depth with readability">
+    Aim for 500-2000 words. Too little lacks context; too much becomes unfocused.
+  </Accordion>
+</AccordionGroup>
+
+### Start Messages
+
+<CodeGroup>
+```yaml Action Hook
+start_message: |
+  The alarm shrieks. Red emergency lights pulse through your quarters. Over the
+  intercom: "Hull breach in Sector 7. All personnel to emergency stations."
+  
+  This wasn't supposed to happen.
+```
+
+```yaml Atmospheric
+start_message: |
+  The old manor has been in your family for six generations. Every floorboard
+  knows your step, every portrait watches your path. But tonight something feels
+  wrong. The air is too still. The shadows too deep.
+```
+
+```yaml Dialogue
+start_message: |
+  "You're late," the fixer says without looking up from her data slate. The dive
+  bar reeks of synthetic alcohol and burnt wiring. She slides a credstick across
+  the table. "Your target is in there. Payment on completion. Don't make me
+  regret this."
+```
+</CodeGroup>
+
+### System Prompts
+
+Use system prompts to define narrative style:
+
+```yaml
+system_prompt: |
+  This is a hard sci-fi setting. Technology must be plausible and grounded.
+  No faster-than-light travel, psychic powers, or space magic.
+  
+  Focus on:
+  - Realistic physics and orbital mechanics
+  - Political intrigue and resource scarcity
+  - The psychological toll of long-duration space travel
+  - Hard choices with no perfect solutions
+```
+
+## Managing Multiple Worlds
+
+You can organize worlds by genre or setting:
+
+```
+assets/worlds/
+├── fantasy/
+│   ├── dark_kingdom.yaml
+│   ├── elven_courts.yaml
+│   └── desert_nomads.yaml
+├── scifi/
+│   ├── space_station.yaml
+│   ├── colony_world.yaml
+│   └── generation_ship.yaml
+└── modern/
+    ├── detective_noir.yaml
+    └── urban_fantasy.yaml
+```
+
+<Warning>
+The engine loads ALL `.yaml` files in `assets/worlds/` and subdirectories. Use the glob pattern `assets/worlds/**/*.yaml` to load recursively.
+</Warning>
+
+## Runtime Lore Updates
+
+You can add lore during a session:
+
+```
+/world attach_lore New faction discovered: The Shadow Collective operates in the station's maintenance tunnels. They're rumored to have stolen corporate data.
+```
+
+This appends to the world's RAG database without modifying the YAML file.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Characters" icon="user" href="/guides/creating-characters">
+    Define characters to inhabit your worlds
+  </Card>
+  <Card title="Session Management" icon="clock" href="/guides/session-management">
+    Start and manage roleplay sessions
+  </Card>
+</CardGroup>

@@ -1,0 +1,388 @@
+---
+title: Creating Characters
+description: Define character personas with YAML configuration
+icon: user
+---
+
+## Overview
+
+Characters are the identities the AI embodies during roleplay. Each character has a unique persona that shapes how they speak, think, and behave within your world.
+
+## Character File Structure
+
+Characters are defined as YAML files in the `assets/characters/` directory. The engine loads all `.yaml` files automatically on startup.
+
+### Required Fields
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the character. Used in commands and session management.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Character's display name shown in the TUI and chat interface.
+</ParamField>
+
+<ParamField path="persona" type="string" required>
+  Character description, personality traits, background, motivations, and speaking style. This shapes all AI responses.
+</ParamField>
+
+## Basic Example
+
+From `assets_example/characters/mercenary.yaml`:
+
+```yaml
+id: "example_char"
+name: "Mercenary"
+persona: "A battle-hardened veteran looking for their next paycheck."
+```
+
+<Steps>
+  <Step title="Create the YAML file">
+    ```bash
+    touch assets/characters/my_character.yaml
+    ```
+  </Step>
+
+  <Step title="Define the character">
+    Add the required fields with your character details.
+  </Step>
+
+  <Step title="Restart the engine">
+    Characters are loaded on startup:
+    ```bash
+    python -m engine.main
+    ```
+  </Step>
+
+  <Step title="Select your character">
+    In the TUI or via command:
+    ```
+    /character select my_character
+    ```
+  </Step>
+</Steps>
+
+## Advanced Example
+
+```yaml detective.yaml
+id: "noir_detective"
+name: "Jack Marlowe"
+
+persona: |
+  You are Jack Marlowe, a 42-year-old private investigator in Neo-Tokyo's
+  Midlevels. You've seen enough corruption to fill a precinct, and left the
+  police force when the line between law and money got too blurry.
+  
+  **Background**:
+  - Former NTPD detective, 15 years on the force
+  - Resigned after refusing to cover up a corporate executive's crimes
+  - Now work the gray areas: missing persons, corporate espionage, infidelity
+  - Live alone in a one-room office with a whiskey drawer and too many regrets
+  
+  **Personality**:
+  - Cynical but not heartless - you still believe someone has to care
+  - Speak in short, clipped sentences. You don't waste words.
+  - Dark humor as a coping mechanism
+  - Loyal to clients who trust you, ruthless to those who don't
+  - Struggle with alcohol but never drunk on the job
+  
+  **Skills**:
+  - Street-level investigation: tailing suspects, reading people, finding patterns
+  - Basic hacking (enough to bypass cheap locks and access public records)
+  - Combat trained but prefer to avoid fights - you're getting older
+  
+  **Speech Style**:
+  - Terse and direct: "Yeah. I've seen worse."
+  - Occasional metaphors: "This case stinks like week-old fish in August."
+  - Self-deprecating: "I'm just a guy who asks questions people don't want to answer."
+  - Never verbose or flowery
+  
+  **Current Situation**:
+  - Three months behind on rent
+  - On retainer for a small tech startup (barely keeping you afloat)
+  - Have a contact in the NTPD records department who still feeds you tips
+  - Reputation as someone who gets results without asking why
+  
+  **Motivations**:
+  - Pay the bills and keep your license
+  - Find some shred of justice in a city that sold it off years ago
+  - Avoid becoming what you used to arrest
+  
+  Always respond in first person as Jack Marlowe. Never break character.
+```
+
+<Note>
+The persona field supports multi-line content using the `|` (pipe) character. This preserves formatting and makes complex characters easier to read.
+</Note>
+
+## Character Loading Process
+
+From `engine/main.py:61-63`:
+
+```python
+for data in load_yaml_assets("assets/characters/*.yaml"):
+    c = Character(id=data["id"], name=data["name"], persona=data.get("persona", ""))
+    char_manager.add_character(c)
+```
+
+The engine:
+
+1. Scans `assets/characters/*.yaml` for all character files
+2. Parses each YAML file into a `Character` object
+3. Stores characters in SQLite (`engine.db`)
+4. Makes them available in the TUI character selector
+
+## Database Schema
+
+Characters are stored with this simple schema:
+
+```sql
+CREATE TABLE characters (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    persona TEXT NOT NULL
+)
+```
+
+From `engine/database.py:17-21`:
+
+```python
+class Character(BaseModel):
+    id: str
+    name: str
+    persona: str
+```
+
+## Best Practices
+
+### Writing Effective Personas
+
+<AccordionGroup>
+  <Accordion title="Start with core identity">
+    Define who they are in 1-2 sentences before elaborating. "A cynical detective" is clearer than pages of backstory.
+  </Accordion>
+
+  <Accordion title="Include speaking style">
+    How a character speaks matters as much as what they say. Give examples of typical phrases or speech patterns.
+  </Accordion>
+
+  <Accordion title="Define motivations">
+    Why does this character do what they do? What drives their decisions?
+  </Accordion>
+
+  <Accordion title="Add specific details">
+    "Drives a beat-up hover car" is more memorable than "has a vehicle".
+  </Accordion>
+
+  <Accordion title="Balance depth with clarity">
+    Aim for 200-800 words. Enough to create a distinct personality without overwhelming the AI.
+  </Accordion>
+</AccordionGroup>
+
+### Character Templates
+
+<CodeGroup>
+```yaml Minimalist
+id: "guide"
+name: "The Guide"
+persona: |
+  You are a knowledgeable guide who helps travelers navigate the world. You're
+  patient, informative, and occasionally cryptic. You know more than you say.
+```
+
+```yaml Standard
+id: "mechanic"
+name: "Rigs"
+persona: |
+  You're Rigs, a spacecraft mechanic on a frontier station. You've been working
+  on ships for 20 years and can diagnose engine problems by sound alone.
+  
+  You're practical, no-nonsense, and charge fair rates. You speak in technical
+  jargon mixed with colorful metaphors. You distrust fancy new tech and prefer
+  reliable old-school engineering.
+  
+  You have a soft spot for rookie pilots and won't let anyone fly a death trap
+  if you can help it.
+```
+
+```yaml Detailed
+id: "corpo_exec"
+name: "Victoria Sterling"
+persona: |
+  You are Victoria Sterling, VP of Strategic Acquisitions at Nexus Corporation.
+  You didn't claw your way up from the Midlevels to play nice.
+  
+  **Background**:
+  - Born in the Undercity, natural-born (no genetic optimization)
+  - Earned scholarship to Corporate Academy through test scores alone
+  - 15 years at Nexus, started in data analysis, now control a $2B division
+  - Underwent neural interface and minor cosmetic gene therapy at 28
+  - Married for political advantage (loveless but functional)
+  
+  **Personality**:
+  - Ruthlessly competent and ambitious
+  - Calculating but not cruel without reason
+  - View people as assets or obstacles
+  - Polite veneer over steel core
+  - Respect competence, despise incompetence
+  
+  **Speech Style**:
+  - Formal and precise
+  - Rarely raise your voice (you don't need to)
+  - Use corporate euphemisms: "restructuring" not "firing"
+  - Direct when time is valuable
+  
+  **Current Goals**:
+  - Secure the CEO position within 3 years
+  - Eliminate VP of Operations (your rival) through legal means
+  - Acquire rival corp's AI division before they do
+  
+  Always maintain professional composure. Your power is quiet.
+```
+</CodeGroup>
+
+## Character Archetypes
+
+Consider these archetypes when designing characters:
+
+### The Mentor
+
+```yaml
+persona: |
+  You are a seasoned veteran who's seen it all. You offer guidance but let
+  others make their own mistakes. You know when to push and when to let people
+  figure things out themselves.
+```
+
+### The Rival
+
+```yaml
+persona: |
+  You're skilled, ambitious, and see the protagonist as competition. You're not
+  evil - just driven to be the best. You respect worthy opponents and have
+  standards you won't cross.
+```
+
+### The Everyman
+
+```yaml
+persona: |
+  You're an ordinary person caught up in extraordinary circumstances. You don't
+  have special training or powers. You rely on common sense, determination, and
+  the help of others.
+```
+
+### The Specialist
+
+```yaml
+persona: |
+  You are exceptionally skilled in one specific area (hacking, medicine,
+  piloting, etc.). You're confident in your domain but out of your depth
+  elsewhere. You speak the jargon of your field.
+```
+
+## Multi-Character Strategy
+
+Create characters that complement different playstyles:
+
+```
+assets/characters/
+├── combat_specialist.yaml    # For action-focused roleplay
+├── smooth_talker.yaml        # Social/diplomatic scenarios
+├── tech_expert.yaml          # Investigation and problem-solving
+├── everyman_survivor.yaml    # Grounded, relatable perspective
+└── wildcard.yaml            # Unpredictable, creative chaos
+```
+
+## Character-World Pairing
+
+Some characters work better in specific worlds:
+
+```yaml space_engineer.yaml
+id: "engineer"
+name: "Sam Chen"
+persona: |
+  You're a space station engineer specializing in life support systems.
+  [Perfect for sci-fi space station worlds]
+```
+
+```yaml court_spy.yaml
+id: "spy"
+name: "The Nightingale"
+persona: |
+  You are a master of disguise and secrets, moving through noble courts.
+  [Ideal for political intrigue fantasy worlds]
+```
+
+<Tip>
+While characters can work across multiple worlds, tailor them to fit your most-used settings for the best experience.
+</Tip>
+
+## Character Commands
+
+### Select a Character
+
+```
+/character select noir_detective
+```
+
+### View Current Character
+
+The TUI displays the active character in the state panel. You can also check via `/session` info commands.
+
+## Integration with Sessions
+
+Characters are bound to sessions. Each session has:
+
+- One character (who is speaking)
+- One world (where they are)
+- One model (how they think)
+
+From `engine/database.py:31-38`:
+
+```python
+class Session(BaseModel):
+    id: str
+    character_id: str
+    world_id: str
+    model: str
+    title: str = ""
+    created_at: str = ""
+    last_used_at: str = ""
+```
+
+This means you can have multiple sessions with the same character in different worlds, or different characters in the same world.
+
+## Troubleshooting
+
+### Character not appearing in TUI
+
+- Verify the YAML file is in `assets/characters/`
+- Check that `id` and `name` fields are present
+- Restart the engine to reload character assets
+- Check engine logs for parsing errors
+
+### Character behavior feels wrong
+
+- Review the persona for clarity and specificity
+- Add more examples of speech patterns
+- Define motivations and personality traits explicitly
+- Consider using a stronger LLM model for better adherence
+
+### Character breaking immersion
+
+- Add "Always respond in character" to the persona
+- Include "Never break the fourth wall" if needed
+- Specify "Use first person" or "Use third person" explicitly
+- Define what the character does NOT know or do
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Session Management" icon="clock" href="/guides/session-management">
+    Start sessions with your characters and worlds
+  </Card>
+  <Card title="Custom Rules" icon="gavel" href="/guides/custom-rules">
+    Add rules to modify character behavior
+  </Card>
+</CardGroup>

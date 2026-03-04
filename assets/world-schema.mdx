@@ -1,0 +1,185 @@
+---
+title: World YAML Schema
+description: Complete reference for world asset YAML files
+---
+
+## Overview
+
+World assets define the settings, lore, and context for your roleplaying scenarios. Each world YAML file represents a distinct setting where characters can interact.
+
+## File Location
+
+World files should be placed in: `assets/worlds/*.yaml`
+
+## Schema Definition
+
+### Required Fields
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the world. Used internally to reference this world. Must be unique across all worlds.
+  
+  **Example:** `"cyberpunk_city"`, `"example_world"`
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Display name of the world shown to users. This appears in world selection menus and UI.
+  
+  **Example:** `"Example Cyberpunk City"`, `"Medieval Fantasy Realm"`
+</ParamField>
+
+<ParamField path="lore" type="string" required>
+  Background information and context about the world. This text provides the foundational setting details that inform AI responses and character interactions.
+  
+  **Example:** `"A high-tech, low-life metropolis ruled by rival corporations."`
+  
+  **Best Practices:**
+  - Keep it concise but informative (1-3 sentences)
+  - Focus on the most distinctive aspects of your world
+  - Include key themes or atmosphere descriptors
+</ParamField>
+
+### Optional Fields
+
+<ParamField path="start_message" type="string" default="">
+  The initial message displayed when entering this world. Sets the scene and creates atmosphere for the first interaction.
+  
+  **Example:** `"The neon lights flicker as you step out into the rain-slicked alleyway. Welcome to the future."`
+  
+  **Usage:**
+  - Displayed at the beginning of a new session
+  - Should be atmospheric and engaging
+  - Can reference the environment, time of day, or initial situation
+</ParamField>
+
+<ParamField path="scene" type="string" default="">
+  Detailed scene description that provides immediate context for the current situation. Added to the AI context on the first message only.
+  
+  **Example:** `"It's late evening in the neon-lit downtown district. Rain pours down on the crowded streets filled with street vendors and corporate workers heading home."`
+  
+  **Usage:**
+  - Injected into the AI context as `--- SCENE ---` block
+  - Only included on the first message of a session
+  - More detailed than `start_message`, used to guide AI responses
+  - Can include sensory details, weather, time of day, and environmental factors
+</ParamField>
+
+<ParamField path="system_prompt" type="string" default="">
+  Custom system-level instructions that modify how the AI behaves in this world. This is passed directly to the AI model's system prompt.
+  
+  **Example:** `"Emphasize the contrast between high technology and urban decay. Responses should have a noir aesthetic with cyberpunk terminology."`
+  
+  **Usage:**
+  - Affects all AI responses in this world
+  - Can specify tone, style, or behavior guidelines
+  - Useful for enforcing genre conventions or narrative voice
+  - Keep instructions clear and specific
+</ParamField>
+
+## Complete Example
+
+```yaml
+id: "cyberpunk_city"
+name: "Neo-Tokyo 2089"
+lore: "A sprawling megacity where corporations rule and technology has merged with humanity. The line between human and machine grows thinner each day."
+start_message: "The neon lights flicker as you step out into the rain-slicked alleyway. Hovercars buzz overhead while street vendors hawk neural implants from makeshift stalls. Welcome to Neo-Tokyo."
+scene: "It's 23:47 on a rainy Tuesday night in the Shibuya district. The streets are crowded with salary workers heading to late-night bars and augmented street samurai looking for work. Corporate towers loom overhead, their holographic advertisements painting the night sky in electric colors."
+system_prompt: "Maintain a cyberpunk noir atmosphere. Emphasize the contrast between high-tech advancement and societal decay. Use cyberpunk terminology naturally (netrunners, chrome, ICE, etc.). Describe technology as both mundane and wondrous."
+```
+
+## Minimal Example
+
+```yaml
+id: "simple_fantasy"
+name: "Fantasy Kingdom"
+lore: "A medieval kingdom filled with magic, dragons, and ancient mysteries."
+```
+
+## Implementation Details
+
+Worlds are loaded at startup and stored in the database. The schema maps to the `World` Pydantic model:
+
+```python
+class World(BaseModel):
+    id: str
+    name: str
+    lore: str
+    start_message: str = ""
+    scene: str = ""
+    system_prompt: str = ""
+```
+
+**Database Storage:** `engine/database.py:49` - Worlds table
+
+**Loading Process:** `engine/utils.py:16` - `load_yaml_assets()` function
+
+**Context Injection:** `engine/llm.py:68-74` - Scene is added to context on first message only
+
+## Best Practices
+
+### IDs
+- Use lowercase with underscores: `cyberpunk_city`, `fantasy_realm`
+- Keep them short but descriptive
+- Never change an ID after creation (it's used as the primary key)
+
+### Names
+- Use title case for readability
+- Make them distinctive and memorable
+- Keep under 50 characters for UI display
+
+### Lore
+- 1-3 sentences is ideal
+- Focus on what makes this world unique
+- Avoid overly detailed history unless it affects current interactions
+
+### Start Messages
+- Write in second person ("you step out...")
+- Create immediate atmosphere
+- Keep it to 1-2 sentences
+
+### Scenes
+- Include sensory details (sights, sounds, smells)
+- Specify time of day and weather if relevant
+- Describe the immediate environment
+- 2-4 sentences works well
+
+### System Prompts
+- Be specific about tone and style
+- Use imperative statements ("Emphasize...", "Include...")
+- Test thoroughly as this affects all AI responses
+- Keep under 200 words for best results
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="World not appearing in selection menu">
+    - Verify the YAML file is in `assets/worlds/` directory
+    - Check that the `id` field is present and unique
+    - Ensure the YAML syntax is valid (use a YAML validator)
+    - Restart the engine to reload assets
+  </Accordion>
+  
+  <Accordion title="Start message not displaying">
+    - The `start_message` field is optional - it defaults to empty string
+    - Start messages display at the beginning of new sessions
+    - Verify the field is spelled correctly (underscore, not hyphen)
+  </Accordion>
+  
+  <Accordion title="Scene not affecting AI responses">
+    - Scene is only injected on the first message of a session
+    - For ongoing context, use `system_prompt` instead
+    - Check that the `scene` field is present and non-empty
+  </Accordion>
+  
+  <Accordion title="System prompt seems ignored">
+    - System prompts compete with other instructions (character persona, rules)
+    - Keep instructions specific and concise
+    - Test with different phrasings
+    - Remember that AI models interpret instructions with some flexibility
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+- [Character Schema](/assets/character-schema) - Define characters for your worlds
+- [Rules Schema](/assets/rules-schema) - Add universal rules and modifiers
+- [Quickstart Guide](/quickstart) - Set up your first world

@@ -1,0 +1,391 @@
+---
+title: Rules YAML Schema
+description: Complete reference for rules asset YAML files
+---
+
+## Overview
+
+Rules assets define universal behavioral guidelines that modify how AI responds across all interactions. Rules are optional modifiers that can be activated or deactivated during gameplay, allowing users to customize the tone, content, and style of their experience.
+
+## File Location
+
+Rules files should be placed in: `assets/rules/*.yaml`
+
+## Schema Definition
+
+### Required Fields
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the rule. Used internally to reference and activate this rule. Must be unique across all rules.
+  
+  **Example:** `"gritty"`, `"nsfw"`, `"comedy"`, `"realistic_combat"`
+  
+  **Convention:** The filename should match the ID (e.g., `gritty.yaml` has `id: "gritty"`)
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Display name of the rule shown to users. This appears in rule selection menus and UI.
+  
+  **Example:** `"Gritty Realism"`, `"NSFW Content"`, `"Comedy Mode"`
+</ParamField>
+
+<ParamField path="prompt" type="string" required>
+  The system-level instruction that modifies AI behavior. This text is injected into the system prompt when the rule is active.
+  
+  **Example:** `"The world is dark, dangerous, and unforgiving. Actions have heavy consequences."`
+  
+  **Usage:**
+  - Written as an imperative instruction to the AI
+  - Should be clear and specific about the desired behavior
+  - Affects all AI responses while active
+  - Can specify tone, content restrictions, or behavioral guidelines
+</ParamField>
+
+## Complete Examples
+
+### Tone Modifier
+
+```yaml
+id: "gritty"
+name: "Gritty Realism"
+prompt: "The world is dark, dangerous, and unforgiving. Actions have heavy consequences. Emphasize the harsh realities of violence, survival, and moral ambiguity. Characters can fail, be injured, or die. Success is never guaranteed."
+```
+
+### Content Filter
+
+```yaml
+id: "nsfw"
+name: "NSFW Content Allowed"
+prompt: "Adult content including violence, profanity, and mature themes is permitted. Respond authentically to the setting and situation without content restrictions. Maintain narrative quality and character consistency."
+```
+
+### Style Modifier
+
+```yaml
+id: "comedy"
+name: "Comedy Mode"
+prompt: "Maintain a lighthearted, humorous tone. Look for opportunities for comedic timing, absurd situations, and witty banter. Even serious situations should have moments of levity. Characters may break the fourth wall occasionally for comedic effect."
+```
+
+### Gameplay Rule
+
+```yaml
+id: "realistic_combat"
+name: "Realistic Combat"
+prompt: "Combat is brutal, fast, and deadly. A single hit can incapacitate or kill. Fights are over quickly, not extended battles. Describe the immediate physical and psychological impact of violence. Adrenaline, fear, and confusion dominate combat situations."
+```
+
+### Narrative Style
+
+```yaml
+id: "noir"
+name: "Noir Style"
+prompt: "Maintain a noir aesthetic with hardboiled dialogue, moral ambiguity, and atmospheric descriptions. Use metaphorical language and emphasize shadows, rain, and urban decay. Characters should be morally complex with hidden motives. The world is corrupt and justice is elusive."
+```
+
+### Content Restriction
+
+```yaml
+id: "family_friendly"
+name: "Family Friendly"
+prompt: "Keep all content appropriate for all ages. Avoid graphic violence, profanity, or adult themes. Conflicts can be tense but resolve without excessive harm. Use creative language to imply danger without explicit description."
+```
+
+## Implementation Details
+
+Rules are loaded at startup and can be activated/deactivated during gameplay. The schema represents a simple key-value structure:
+
+```python
+# Rules are loaded dynamically, not stored in database
+# Active rules are tracked in state
+ACTIVE_RULES = []  # List of rule IDs
+```
+
+**Loading Process:** `engine/utils.py:16` - `load_yaml_assets()` function
+
+**Activation:** `engine/state.py:48` - `ACTIVE_RULES` list tracks enabled rules
+
+**Prompt Injection:** `engine/llm.py:78-90` - Active rule prompts are combined into a `### UNIVERSAL LAWS ###` block
+
+**Command:** `engine/commands.py:78` - `/rule <rule_id>` command toggles rules on/off
+
+### How Rules Are Applied
+
+When rules are active, their prompts are combined and added to the system prompt:
+
+```python
+if state.ACTIVE_RULES:
+    loaded_texts = []
+    for rule_id in state.ACTIVE_RULES:
+        with open(f"assets/rules/{rule_id}.yaml", "r") as f:
+            data = yaml.safe_load(f)
+            if data and "prompt" in data:
+                loaded_texts.append(data["prompt"].strip())
+    if loaded_texts:
+        rules_block = "### UNIVERSAL LAWS ###\n" + "\n\n".join(loaded_texts)
+```
+
+This means:
+- Multiple rules can be active simultaneously
+- Rule prompts are concatenated with double line breaks
+- Rules are marked as "UNIVERSAL LAWS" to give them weight
+- Rules apply to ALL messages while active
+
+## Writing Effective Rules
+
+### Structure Your Prompt
+
+A well-structured rule prompt typically includes:
+
+1. **Core Directive** - The main behavioral change
+2. **Scope** - What aspects of responses are affected
+3. **Guidelines** - Specific examples or boundaries
+
+**Example:**
+```yaml
+prompt: |
+  Maintain strict adherence to scientific realism. [Core Directive]
+  
+  All technology, physics, and biology must follow real-world principles. [Scope]
+  
+  No faster-than-light travel, no violations of thermodynamics, no impossible materials. When characters use technology, describe its realistic limitations and requirements. [Guidelines]
+```
+
+### Directive Clarity
+
+Be explicit about what you want:
+
+- **Vague:** "Make things more realistic"
+- **Clear:** "Emphasize realistic consequences: injuries heal slowly, resources are scarce, and exhaustion affects performance"
+
+- **Vague:** "Add humor"
+- **Clear:** "Look for opportunities for situational comedy, witty dialogue, and absurd contrasts between expectations and reality"
+
+### Scope Definition
+
+Specify what aspects are affected:
+
+- **Tone:** Serious, comedic, dramatic, lighthearted
+- **Content:** Violence level, adult themes, profanity
+- **Pacing:** Fast action vs slow contemplation
+- **Style:** Prose style, description density, dialogue patterns
+- **Logic:** Realism vs fantasy, consequences vs plot armor
+
+### Multi-Line Prompts
+
+For complex rules, use YAML's multi-line syntax:
+
+```yaml
+prompt: |
+  First directive about tone and style.
+  
+  Second directive about content and themes.
+  
+  Third directive with specific examples or exceptions.
+```
+
+## Rule Categories
+
+### Tone Rules
+
+Control the overall emotional and atmospheric quality:
+
+```yaml
+# Serious/Dark
+prompt: "Maintain a serious, somber tone. Consequences are real and lasting."
+
+# Light/Upbeat  
+prompt: "Keep the tone optimistic and uplifting. Challenges are opportunities for growth."
+
+# Satirical
+prompt: "Apply satirical exaggeration to authority figures and institutions."
+```
+
+### Content Rules
+
+Control what content is included or excluded:
+
+```yaml
+# Explicit Violence
+prompt: "Describe combat and violence explicitly with physical detail."
+
+# Fade to Black
+prompt: "Handle adult situations tastefully, fading to black at appropriate moments."
+
+# Profanity
+prompt: "Characters may use profanity naturally when it fits their personality and situation."
+```
+
+### Style Rules
+
+Control how narrative is presented:
+
+```yaml
+# Cinematic
+prompt: "Describe scenes cinematically with camera-like attention to angles, lighting, and composition."
+
+# Literary
+prompt: "Use rich, literary prose with metaphor and varied sentence structure."
+
+# Minimalist
+prompt: "Keep descriptions concise and understated. Show through action and dialogue."
+```
+
+### Gameplay Rules
+
+Control mechanical or systems aspects:
+
+```yaml
+# Permadeath
+prompt: "Character death is permanent. When a character dies, they cannot return."
+
+# Resource Management
+prompt: "Track resources carefully. Ammunition, food, and supplies are limited and must be managed."
+
+# Skill Progression
+prompt: "Characters improve gradually through practice. Show developing competence over time."
+```
+
+## Best Practices
+
+### IDs
+- Use lowercase with underscores: `realistic_combat`, `noir_style`
+- Keep them short and descriptive
+- Match the filename: `realistic_combat.yaml` contains `id: "realistic_combat"`
+- Use consistent naming conventions (e.g., all style rules end with `_style`)
+
+### Names
+- Use title case for readability
+- Make the effect clear from the name
+- Keep under 40 characters for UI display
+- Consider category prefixes: "Style: Noir", "Content: NSFW"
+
+### Prompts
+- **Be Specific:** "Combat is lethal" vs "be more realistic"
+- **Use Imperatives:** "Emphasize...", "Maintain...", "Avoid..."
+- **Provide Examples:** "Look for opportunities for X, such as Y and Z"
+- **Consider Interaction:** How will this rule interact with others?
+- **Test Thoroughly:** Activate with different characters and worlds
+- **Length:** 50-200 words is ideal; longer prompts may dilute effect
+
+### Rule Combinations
+
+Consider how rules work together:
+
+```yaml
+# These work well together:
+- gritty (dark tone)
+- realistic_combat (lethal fights)  
+- nsfw (adult content)
+
+# These might conflict:
+- family_friendly (no violence)
+- gritty (harsh realism)
+```
+
+Test rule combinations to ensure they complement rather than contradict each other.
+
+## Advanced Techniques
+
+### Conditional Guidelines
+
+Include conditional logic in your prompt:
+
+```yaml
+prompt: "Maintain historical accuracy for the 1920s setting. Technology should be period-appropriate: no computers, no modern weapons, no contemporary slang. However, allow for the supernatural elements that exist within the world's lore (ghosts, magic) as long as they follow their own consistent rules."
+```
+
+### Graduated Rules
+
+Create multiple versions of the same rule at different intensities:
+
+```yaml
+# realism_light.yaml
+prompt: "Consider realistic consequences, though characters can still perform impressive feats."
+
+# realism_moderate.yaml  
+prompt: "Emphasize realistic limitations. Characters tire, get hurt, and face believable obstacles."
+
+# realism_strict.yaml
+prompt: "Strict realism applies. All physics, biology, and consequences follow real-world rules. No plot armor."
+```
+
+### Meta-Rules
+
+Rules that affect how other rules are interpreted:
+
+```yaml
+id: "rule_of_cool"
+name: "Rule of Cool"
+prompt: "When there's a choice between strict realism and something awesome, choose awesome. Prioritize dramatic moments and spectacular action over perfect logical consistency. The story and excitement come first."
+```
+
+## Special Rules
+
+### NSFW Rule
+
+The engine specifically checks for a rule with ID `nsfw` in some commands:
+
+```python
+# engine/commands.py:105
+if os.path.exists("assets/rules/nsfw.yaml"):
+    # Special handling for NSFW rule
+```
+
+This suggests you may want to create a standard `nsfw.yaml` rule for adult content.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Rule not appearing in available rules list">
+    - Verify the YAML file is in `assets/rules/` directory
+    - Check that the `id` field is present and unique
+    - Ensure the YAML syntax is valid (use a YAML validator)
+    - Restart the engine to reload assets
+    - Check logs for loading errors
+  </Accordion>
+  
+  <Accordion title="Rule seems to have no effect">
+    - Verify the rule is actually activated (check `/rule` command)
+    - Make the prompt more specific and directive
+    - Rules compete with character persona and world prompts
+    - Try activating the rule alone to test its effect
+    - Remember AI models interpret instructions with flexibility
+  </Accordion>
+  
+  <Accordion title="Rules conflict with each other">
+    - Review active rules for contradictions
+    - Deactivate conflicting rules
+    - Consider combining rules into a single, coherent prompt
+    - Test rule combinations systematically
+  </Accordion>
+  
+  <Accordion title="Cannot activate rule with /rule command">
+    - Verify the rule ID matches the filename
+    - Check that the file exists in `assets/rules/`
+    - Ensure proper YAML syntax (use a validator)
+    - Check engine logs for errors
+  </Accordion>
+</AccordionGroup>
+
+## User Commands
+
+Users can manage rules during gameplay:
+
+```
+/rule <rule_id>    - Toggle a rule on/off
+/rules             - Show currently active rules
+```
+
+**Example:**
+```
+/rule gritty       - Activates "Gritty Realism" rule
+/rule gritty       - Deactivates it (toggle)
+/rules             - Shows: Active rules: gritty, nsfw
+```
+
+## Related Resources
+
+- [World Schema](/assets/world-schema) - Worlds also use system prompts
+- [Character Schema](/assets/character-schema) - Character personas interact with rules
+- [Development Guide](/development) - Learn how rules are processed in the engine
